@@ -12,6 +12,8 @@ export interface Check {
   ok: boolean
   detail: string
   fix?: string
+  /** A failed optional check is a warning: it limits a feature but does not fail the doctor. */
+  optional?: boolean
 }
 
 export interface DoctorDeps {
@@ -78,6 +80,13 @@ export async function runChecks(deps: DoctorDeps): Promise<Check[]> {
     checks.push({ label: 'simctl', ok: false, detail: (e as Error).message.split('\n')[0], fix: 'check the Xcode installation' })
   }
 
+  try {
+    const out = await deps.run('ffmpeg', ['-version'])
+    checks.push({ label: 'ffmpeg', ok: true, detail: out.split('\n')[0].replace(/ Copyright.*/, ''), optional: true })
+  } catch {
+    checks.push({ label: 'ffmpeg', ok: false, detail: 'not found; recordings stay full-size, no shareable export', fix: 'brew install ffmpeg', optional: true })
+  }
+
   const missing = HELPERS.filter((h) => !deps.isExecutable(path.join(deps.helpersDir, h)))
   checks.push(missing.length === 0
     ? { label: 'helper binaries', ok: true, detail: HELPERS.join(', ') }
@@ -88,8 +97,9 @@ export async function runChecks(deps: DoctorDeps): Promise<Check[]> {
 export async function cmdDoctor(deps: DoctorDeps = defaultDeps()): Promise<number> {
   const checks = await runChecks(deps)
   for (const c of checks) {
-    console.log(`${c.ok ? `${GREEN}✓` : `${RED}✗`}${R} ${c.label}: ${c.detail}`)
+    const mark = c.ok ? `${GREEN}✓` : c.optional ? `${YELLOW}!` : `${RED}✗`
+    console.log(`${mark}${R} ${c.label}: ${c.detail}`)
     if (!c.ok && c.fix) console.log(`  ${YELLOW}→ ${c.fix}${R}`)
   }
-  return checks.every((c) => c.ok) ? 0 : 1
+  return checks.every((c) => c.ok || c.optional) ? 0 : 1
 }

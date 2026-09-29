@@ -2,7 +2,7 @@
 
 A slim fork of [tapflow](https://github.com/jo-duchan/tapflow) for agents. It drives iOS
 simulators through their accessibility tree and direct touch input, replays deterministic flows,
-and (planned) records each run to video.
+and records each run to video with a timeline of what happened when.
 
 What was removed from upstream: Android support, the browser dashboard, the relay server and its
 accounts, streaming, audio, network control, the docs site, and the repository tooling around them. The upstream history is kept; `upstream` points at the original.
@@ -17,7 +17,7 @@ accounts, streaming, audio, network control, the docs site, and the repository t
 ```sh
 pnpm install && pnpm build
 node packages/cli/bin/tapflow.js doctor
-node packages/cli/bin/tapflow.js flow run flows/*.yaml --device "iPhone 17 Pro"
+node packages/cli/bin/tapflow.js flow run flows/*.yaml --device "iPhone 17 Pro" --record out/
 node packages/cli/bin/tapflow.js mcp --device "iPhone 17 Pro"     # MCP over stdio
 ```
 

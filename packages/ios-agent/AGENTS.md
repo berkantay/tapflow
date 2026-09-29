@@ -35,6 +35,18 @@ Measured on Xcode 27 / iOS 26.0 while building this, and worth keeping in mind:
   `value`, then `Selected`, `Keyboard Focused`, `Disabled`). The parser scans them in order; a
   label used to swallow a following `placeholderValue`, and an identifier followed by a flag was lost.
 
+## Recording
+
+- `ScreenRecorder` runs `simctl io <udid> recordVideo --codec=h264 --force`. It waits for "Recording
+  started" on stderr (that moment is t=0 of the action log and of the video), and stops with SIGINT,
+  which makes simctl write the file and exit 0.
+- The raw file is full resolution and variable frame rate (a frame only when the screen changes),
+  about 0.5-0.7 MB a second while things move. `exportVideo` re-encodes to 600px wide, constant 30fps,
+  `+faststart`, which comes out 20-30x smaller.
+- Markers are `drawbox` squares, not captions: the Homebrew ffmpeg build has no `drawtext` or
+  `subtitles` filter, so text is not burned in. The step timeline is written as text instead.
+- One recording per simulator at a time; `close()` aborts one in progress, `shutdown()` finishes it.
+
 After changing `xctest-runner/TreeRunner/*.swift`, delete `xctest-runner/build/` so the runner is
 rebuilt on first use; `XCUITreeReader` only checks that a build exists.
 

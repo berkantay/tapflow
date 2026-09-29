@@ -24,6 +24,10 @@ function fakeSim(tree: UIElement[] = []) {
       return buf
     }),
     close: vi.fn(),
+    recording: false,
+    startRecording: vi.fn(async function (this: { recording: boolean }) { this.recording = true }),
+    stopRecording: vi.fn(async () => ({ path: '/tmp/r.mp4', actionsPath: '/tmp/r.mp4.actions.json', durationMs: 1200, bytes: 10, actions: [{ t: 300, kind: 'note', text: 'bug here' }] })),
+    mark: vi.fn(),
   }
 }
 
@@ -43,7 +47,7 @@ describe('tap_element', () => {
     const sim = fakeSim([el('button', 'Sign in', 0.4), el('text', 'Welcome')])
     const r = await tools(sim)('tap_element', { text: 'Sign in' })
     expect(r.isError).toBeUndefined()
-    expect(sim.tap).toHaveBeenCalledWith(0.5, expect.closeTo(0.25))
+    expect(sim.tap).toHaveBeenCalledWith(0.5, expect.closeTo(0.25), 'Sign in')
   })
 
   it('refuses an ambiguous match and names the candidates', async () => {
@@ -57,7 +61,7 @@ describe('tap_element', () => {
   it('picks by role and index when asked', async () => {
     const sim = fakeSim([el('button', 'Save', 0.1), el('cell', 'Save draft', 0.5)])
     await tools(sim)('tap_element', { label: 'Sav', role: 'cell' })
-    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25))
+    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Save draft')
   })
 
   it('reports no match without tapping', async () => {
@@ -96,5 +100,30 @@ describe('errors', () => {
     const r = await tools(sim)('tap', { x: 0.5, y: 0.5 })
     expect(r.isError).toBe(true)
     expect(r.content[0].text).toBe('tap failed: input channel unavailable')
+  })
+})
+
+describe('recording tools', () => {
+  it('refuses a mark or stop while not recording', async () => {
+    const run = tools(fakeSim())
+    expect((await run('mark_recording', { text: 'x' })).isError).toBe(true)
+    expect((await run('stop_recording')).isError).toBe(true)
+  })
+
+  it('records, marks, and returns the video with its timeline', async () => {
+    const sim = fakeSim()
+    const run = tools(sim)
+    expect((await run('start_recording', { path: '/tmp/r.mp4' })).content[0].text).toBe('Recording to /tmp/r.mp4')
+    await run('mark_recording', { text: 'bug here' })
+    expect(sim.mark).toHaveBeenCalledWith({ kind: 'note', text: 'bug here' })
+    const out = JSON.parse((await run('stop_recording', { export: false })).content[0].text!)
+    expect(out).toMatchObject({ video: '/tmp/r.mp4', durationMs: 1200, timeline: '0:00.3  bug here' })
+    expect(out.shareable).toBeUndefined()
+  })
+
+  it('passes the tapped element\'s label to the recording', async () => {
+    const sim = fakeSim([el('button', 'Sign in', 0.4)])
+    await tools(sim)('tap_element', { text: 'Sign in' })
+    expect(sim.tap).toHaveBeenCalledWith(0.5, expect.closeTo(0.25), 'Sign in')
   })
 })

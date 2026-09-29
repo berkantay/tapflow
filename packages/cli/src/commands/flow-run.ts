@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
-import { parseFlow, runFlow, SimulatorDriver, toJUnitXml, type Flow, type FlowResult } from '@tapflowio/flow-runner'
-import { Simulator } from '@tapflowio/ios-agent'
+import { parseFlow, recordSteps, runFlow, SimulatorDriver, toJUnitXml, type EngineOptions, type Flow, type FlowResult } from '@tapflowio/flow-runner'
+import { exportVideo, Simulator, timeline } from '@tapflowio/ios-agent'
 
 export interface FlowRunOptions {
   device?: string
@@ -10,6 +10,9 @@ export interface FlowRunOptions {
   artifacts?: string
   timeout?: number
   lean?: boolean
+  /** Record each flow into this directory: full-size video, a shareable export, and a timeline. */
+  record?: string
+  videoWidth?: number
 }
 
 export const EXIT_FLOW_FAILED = 1
@@ -36,6 +39,20 @@ async function pickDevice(device: string | undefined): Promise<string> {
  * selector or an assertion); 2 means the run could not be carried out (no device, a simulator
  * fault), so a CI job can tell a broken build from a broken runner.
  */
+async function saveRecording(sim: Simulator, dir: string, stem: string, width?: number): Promise<void> {
+  const rec = await sim.stopRecording()
+  const timelinePath = path.join(dir, `${stem}.timeline.txt`)
+  fs.writeFileSync(timelinePath, timeline(rec.actions, { stepsOnly: true }) + '\n')
+  console.log(`  video: ${rec.path} (${(rec.bytes / 1e6).toFixed(1)} MB)`)
+  try {
+    const web = await exportVideo(rec.path, path.join(dir, `${stem}.web.mp4`), rec.actions, { width })
+    console.log(`  shareable: ${web.path} (${(web.bytes / 1e6).toFixed(1)} MB)`)
+  } catch (e) {
+    console.error(`  could not export a shareable video: ${(e as Error).message}`)
+  }
+  console.log(`  timeline: ${timelinePath}`)
+}
+
 export async function cmdFlowRun(files: string[], opts: FlowRunOptions): Promise<number> {
   let sim: Simulator | undefined
   try {
@@ -65,9 +82,15 @@ export async function cmdFlowRun(files: string[], opts: FlowRunOptions): Promise
       await sim.install(opts.app)
     }
 
-    const engineOpts = opts.timeout !== undefined ? { defaultTimeoutMs: Math.round(opts.timeout * 1000) } : {}
+    const baseOpts: EngineOptions = opts.timeout !== undefined ? { defaultTimeoutMs: Math.round(opts.timeout * 1000) } : {}
     const results: FlowResult[] = []
     for (const [i, flow] of flows.entries()) {
+      const stem = `${String(i + 1).padStart(2, '0')}-${flow.name.replace(/[^\w.-]+/g, '_')}`
+      const engineOpts: EngineOptions = opts.record ? { ...baseOpts, onStep: recordSteps(sim) } : baseOpts
+      if (opts.record) {
+        fs.mkdirSync(opts.record, { recursive: true })
+        await sim.startRecording(path.join(opts.record, `${stem}.mp4`))
+      }
       process.stdout.write(`▶ ${flow.name} `)
       const result = await runFlow(flow, new SimulatorDriver(sim, flow.appId), engineOpts)
       results.push(result)
@@ -75,13 +98,14 @@ export async function cmdFlowRun(files: string[], opts: FlowRunOptions): Promise
       if (result.status === 'failed') {
         console.error(`  ${result.failureMessage}`)
         if (result.failureScreenshot) {
-          const dir = opts.artifacts ?? path.join('.tapflow', 'artifacts')
+          const dir = opts.artifacts ?? opts.record ?? path.join('.tapflow', 'artifacts')
           fs.mkdirSync(dir, { recursive: true })
-          const shot = path.join(dir, `${String(i + 1).padStart(2, '0')}-${flow.name.replace(/[^\w.-]+/g, '_')}-failure.png`)
+          const shot = path.join(dir, `${stem}-failure.png`)
           fs.writeFileSync(shot, result.failureScreenshot)
           console.error(`  screenshot: ${shot}`)
         }
       }
+      if (opts.record) await saveRecording(sim, opts.record, stem, opts.videoWidth)
     }
 
     if (opts.junit) {
@@ -97,6 +121,7 @@ export async function cmdFlowRun(files: string[], opts: FlowRunOptions): Promise
     console.error(`error: ${(e as Error).message}`)
     return EXIT_ENV_ERROR
   } finally {
+    if (sim?.recording) await sim.stopRecording().catch(() => {})
     sim?.close()
   }
 }

@@ -22,6 +22,19 @@ const png = await sim.screenshot()
 sim.close()
 ```
 
+Recording:
+
+```ts
+import { exportVideo, timeline } from '@tapflowio/ios-agent'
+
+await sim.startRecording('/tmp/run.mp4')
+// … drive the app; every action is logged with its time in the video …
+sim.mark({ kind: 'note', text: 'crash reproduced' })
+const rec = await sim.stopRecording()                 // full-size .mp4 + .actions.json
+await exportVideo(rec.path, '/tmp/run.web.mp4', rec.actions)   // small, with tap markers (ffmpeg)
+console.log(timeline(rec.actions))
+```
+
 Coordinates are normalized 0-1 against the screen, the same space the tree reports frames in.
 The first `uiTree()`, `typeText()` or `pressKey()` builds a small XCUITest runner (about 30s, cached).
 

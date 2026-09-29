@@ -1,6 +1,6 @@
 import { PlatformError, ValidationError } from '@tapflowio/agent-core'
 import type { Simulator } from '@tapflowio/ios-agent'
-import type { FlowDriver } from './engine.js'
+import type { FlowDriver, StepEvent } from './engine.js'
 import { EnvironmentStepError, markEnvironmentFailure, TransientQueryError } from './errors.js'
 
 // Failures that belong to the flow rather than the simulator: a key the flow names wrongly, or text
@@ -41,7 +41,7 @@ export class SimulatorDriver implements FlowDriver {
     }
   }
 
-  tap(x: number, y: number) { return this.guard(() => this.sim.tap(x, y)) }
+  tap(x: number, y: number, label?: string) { return this.guard(() => this.sim.tap(x, y, label)) }
   swipe(from: [number, number], to: [number, number], durationMs: number) { return this.guard(() => this.sim.swipe(from, to, durationMs)) }
   inputText(text: string) { return this.guard(() => this.sim.typeText(text, this.app())) }
   pressKey(code: string) { return this.guard(() => this.sim.pressKey(code, this.app())) }
@@ -49,4 +49,11 @@ export class SimulatorDriver implements FlowDriver {
   launchApp() { return this.guard(() => this.sim.launch(this.app())) }
   clearState(appId: string) { return this.guard(() => this.sim.clearAppData(appId)) }
   screenshot() { return this.guard(() => this.sim.screenshot()) }
+}
+
+/** An `onStep` hook that writes each step into the simulator's recording log (a no-op when not recording). */
+export function recordSteps(sim: Simulator): (event: StepEvent) => void {
+  return (e) => sim.mark(e.phase === 'start'
+    ? { kind: 'step', name: e.name, status: 'started' }
+    : { kind: 'step', name: e.name, status: e.status, ...(e.message ? { message: e.message } : {}) })
 }

@@ -271,3 +271,28 @@ describe('Simulator apps and text', () => {
     expect(lean.leanStore.revert).toHaveBeenCalled()
   })
 })
+
+describe('Simulator recording', () => {
+  it('logs actions to the recorder with what was tapped', async () => {
+    const recorder = { recording: true, start: vi.fn(async () => {}), stop: vi.fn(), mark: vi.fn(), abort: vi.fn() }
+    const simctl = mockSimctl()
+    const touch = mockTouch()
+    const sim = new Simulator(UDID, {
+      simctl: simctl as unknown as SimctlWrapper,
+      treeReader: mockReader() as unknown as XCUITreeReader,
+      leanStore: mockLean() as unknown as LeanStore,
+      touchHelper: () => touch as unknown as TouchHelper,
+      recorder: recorder as unknown as import('../Recorder').ScreenRecorder,
+    })
+    await sim.launch('com.example.app')
+    await sim.tap(0.5, 0.5, 'Sign in')
+    await sim.pressButton('home')
+    expect(recorder.mark.mock.calls.map((c) => c[0])).toEqual([
+      { kind: 'launch', bundleId: 'com.example.app' },
+      { kind: 'tap', x: 0.5, y: 0.5, label: 'Sign in' },
+      { kind: 'button', name: 'home' },
+    ])
+    sim.close()
+    expect(recorder.abort).toHaveBeenCalled()
+  })
+})

@@ -10,6 +10,7 @@ import { TouchHelper } from './TouchHelper.js'
 import { XCUITreeReader } from './XCUITreeReader.js'
 import { LeanStore } from './LeanStore.js'
 import { LEAN_LABELS } from './leanLabels.js'
+import { ScreenRecorder, type ActionInput, type Recording } from './Recorder.js'
 
 const logger = createLogger('ios-agent:simulator')
 
@@ -60,6 +61,7 @@ export interface SimulatorOptions {
   treeReader?: XCUITreeReader
   leanStore?: LeanStore
   touchHelper?: (udid: string) => TouchHelper
+  recorder?: ScreenRecorder
 }
 
 export interface BootOptions {
@@ -79,6 +81,7 @@ export class Simulator {
   private readonly leanStore: LeanStore
   private readonly makeTouchHelper: (udid: string) => TouchHelper
   private readonly lean: boolean
+  private readonly recorder: ScreenRecorder
   private touch: TouchHelper | null = null
   private foregroundBundleId: string | null = null
 
@@ -88,6 +91,7 @@ export class Simulator {
     this.leanStore = options.leanStore ?? new LeanStore()
     this.makeTouchHelper = options.touchHelper ?? ((udid) => new TouchHelper(udid))
     this.lean = options.lean ?? false
+    this.recorder = options.recorder ?? new ScreenRecorder(udid)
   }
 
   /** Available simulators on this Mac. */
@@ -145,6 +149,7 @@ export class Simulator {
 
   /** Shut the simulator down and release everything this instance started. */
   async shutdown(): Promise<void> {
+    if (this.recorder.recording) await this.recorder.stop().catch((e) => logger.warn('stopping the recording failed:', (e as Error).message))
     this.close()
     await this.simctl.shutdown(this.udid)
     this.revertLean()
@@ -152,6 +157,7 @@ export class Simulator {
 
   /** Release helper processes without shutting the simulator down. */
   close(): void {
+    this.recorder.abort()
     this.stopTouch()
     this.treeReader.stopIfDevice(this.udid)
     this.simctl.stopKeyboardDaemon()
@@ -194,6 +200,7 @@ export class Simulator {
   async launch(bundleId: string): Promise<void> {
     await this.simctl.launchApp(this.udid, bundleId)
     this.foregroundBundleId = bundleId
+    this.recorder.mark({ kind: 'launch', bundleId })
   }
 
   /** Wipe an app's data container without uninstalling it. */
@@ -201,8 +208,9 @@ export class Simulator {
     return this.simctl.clearAppData(this.udid, bundleId)
   }
 
-  openUrl(url: string): Promise<void> {
-    return this.simctl.openUrl(this.udid, url)
+  async openUrl(url: string): Promise<void> {
+    await this.simctl.openUrl(this.udid, url)
+    this.recorder.mark({ kind: 'openUrl', url })
   }
 
   screenshot(format: 'png' | 'jpeg' = 'png'): Promise<Buffer> {
@@ -225,14 +233,17 @@ export class Simulator {
     }
   }
 
-  async tap(x: number, y: number): Promise<void> {
+  /** Tap a normalized point. `label` names what was tapped in a recording's action log. */
+  async tap(x: number, y: number, label?: string): Promise<void> {
     const touch = await this.input()
     if (!touch.touchStart(x, y) || !touch.touchEnd()) throw this.inputRefused('tap', touch)
+    this.recorder.mark({ kind: 'tap', x, y, ...(label ? { label } : {}) })
   }
 
   async swipe(from: [number, number], to: [number, number], durationMs = 300): Promise<void> {
     const touch = await this.input()
     if (!touch.touchStart(from[0], from[1])) throw this.inputRefused('swipe', touch)
+    this.recorder.mark({ kind: 'swipe', from, to, durationMs })
     const interval = durationMs / SWIPE_STEPS
     for (let i = 1; i < SWIPE_STEPS; i++) {
       await delay(interval)
@@ -251,6 +262,7 @@ export class Simulator {
   async typeText(text: string, bundleId: string | undefined = this.foregroundBundleId ?? undefined): Promise<void> {
     if (!text) return
     await this.treeReader.type(this.udid, this.requireBundle(bundleId), text)
+    this.recorder.mark({ kind: 'type', text })
   }
 
   /** Press a key in the focused element: `return`/`enter`, `delete`/`backspace`, `tab`, `escape`, `space`. */
@@ -258,6 +270,7 @@ export class Simulator {
     const key = KEY_ALIASES[name] ?? name.toLowerCase()
     if (!KEY_NAMES.includes(key)) throw new ValidationError(`Unknown key: ${name} (expected one of ${KEY_NAMES.join(', ')})`)
     await this.treeReader.key(this.udid, this.requireBundle(bundleId), key)
+    this.recorder.mark({ kind: 'key', name: key })
   }
 
   /** Press a hardware button: one of `BUTTON_NAMES`. */
@@ -266,6 +279,29 @@ export class Simulator {
     if (!button) throw new ValidationError(`Unknown button: ${name} (expected one of ${BUTTON_NAMES.join(', ')})`)
     const touch = await this.input()
     if (!touch.pressButton(button.usagePage, button.usage)) throw this.inputRefused(`button ${name}`, touch)
+    this.recorder.mark({ kind: 'button', name })
+  }
+
+  /**
+   * Start recording the screen to an .mp4. Every action taken through this instance until
+   * `stopRecording()` is logged with its time in the video.
+   */
+  startRecording(path: string): Promise<void> {
+    return this.recorder.start(path)
+  }
+
+  /** Stop recording; resolves once the video is written, with the action log beside it. */
+  stopRecording(): Promise<Recording> {
+    return this.recorder.stop()
+  }
+
+  get recording(): boolean {
+    return this.recorder.recording
+  }
+
+  /** Add an entry to the current recording's action log (a flow step, a note). No-op when not recording. */
+  mark(action: ActionInput): void {
+    this.recorder.mark(action)
   }
 
   rotate(orientation: Orientation): Promise<void> {

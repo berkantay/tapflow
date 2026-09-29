@@ -3,8 +3,8 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { matchSelector, parseFlow, runFlow, SimulatorDriver } from '@tapflowio/flow-runner'
-import { BUTTON_NAMES, KEY_NAMES } from '@tapflowio/ios-agent'
+import { matchSelector, parseFlow, recordSteps, runFlow, SimulatorDriver } from '@tapflowio/flow-runner'
+import { BUTTON_NAMES, KEY_NAMES, exportVideo, timeline } from '@tapflowio/ios-agent'
 import type { DeviceContext } from './devices.js'
 
 type ToolResult = { content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>; isError?: boolean }
@@ -173,7 +173,7 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
         return err(`tap_element: ${matches.length} elements matched (${matches.slice(0, 5).map((m) => `${m.role} "${m.label}"`).join(', ')}); pass role or index`)
       }
       const { x, y, width, height } = target.frame
-      await sim.tap(x + width / 2, y + height / 2)
+      await sim.tap(x + width / 2, y + height / 2, target.label || target.identifier)
       return ok(`Tapped ${target.role} "${target.label}"`)
     }),
   )
@@ -232,6 +232,75 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
   )
 
   server.registerTool(
+    'start_recording',
+    {
+      description:
+        'Start recording the device screen. Every action taken until stop_recording is logged with its time in the video. ' +
+        'Use this to leave evidence of what was done: a reproduced bug, a verified fix.',
+      inputSchema: {
+        path: z.string().optional().describe('Where to write the .mp4 (default: a temp file)'),
+        device,
+      },
+    },
+    ({ path: videoPath, device: name }) => attempt('start_recording', async () => {
+      const sim = await ctx.resolve(name)
+      const target = videoPath ?? path.join(os.tmpdir(), `tapflow-recording-${sim.udid.slice(0, 8)}-${Date.now()}.mp4`)
+      await sim.startRecording(target)
+      return ok(`Recording to ${target}`)
+    }),
+  )
+
+  server.registerTool(
+    'mark_recording',
+    {
+      description: 'Add a note to the current recording\'s timeline at this moment, e.g. "crash reproduced" or "fix verified".',
+      inputSchema: { text: z.string(), device },
+    },
+    ({ text, device: name }) => attempt('mark_recording', async () => {
+      const sim = await ctx.resolve(name)
+      if (!sim.recording) return err('mark_recording: nothing is being recorded; call start_recording first')
+      sim.mark({ kind: 'note', text })
+      return ok(`Marked "${text}"`)
+    }),
+  )
+
+  server.registerTool(
+    'stop_recording',
+    {
+      description:
+        'Stop recording. Returns the full-size video, a small shareable export with tap markers (suitable for a pull request), ' +
+        'the action log, and a timeline of what happened when.',
+      inputSchema: {
+        export: z.boolean().optional().describe('Also write the shareable .web.mp4 (default true; needs ffmpeg)'),
+        width: z.number().int().min(240).max(1600).optional().describe('Width of the shareable video (default 600)'),
+        device,
+      },
+    },
+    ({ export: doExport, width, device: name }) => attempt('stop_recording', async () => {
+      const sim = await ctx.resolve(name)
+      if (!sim.recording) return err('stop_recording: nothing is being recorded')
+      const rec = await sim.stopRecording()
+      const result: Record<string, unknown> = {
+        video: rec.path,
+        bytes: rec.bytes,
+        durationMs: rec.durationMs,
+        actions: rec.actionsPath,
+        timeline: timeline(rec.actions),
+      }
+      if (doExport !== false) {
+        try {
+          const web = await exportVideo(rec.path, rec.path.replace(/\.(mp4|mov)$/i, '.web.mp4'), rec.actions, { width })
+          result.shareable = web.path
+          result.shareableBytes = web.bytes
+        } catch (e) {
+          result.exportError = (e as Error).message
+        }
+      }
+      return ok(JSON.stringify(result, null, 2))
+    }),
+  )
+
+  server.registerTool(
     'run_flow',
     {
       description:
@@ -257,7 +326,9 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
         yamlText = fs.readFileSync(resolved, 'utf-8')
       }
       const parsed = parseFlow(yamlText!, flowPath ?? 'inline-flow.yaml')
-      const result = await runFlow(parsed, new SimulatorDriver(await ctx.resolve(name), parsed.appId))
+      const sim = await ctx.resolve(name)
+      // Steps land in the recording's timeline when start_recording is running.
+      const result = await runFlow(parsed, new SimulatorDriver(sim, parsed.appId), { onStep: recordSteps(sim) })
       let screenshotPath: string | undefined
       if (result.failureScreenshot) {
         screenshotPath = path.join(os.tmpdir(), `tapflow-flow-failure-${Date.now()}.png`)

@@ -6,6 +6,7 @@ const outputs: Record<string, string> = {
   'xcodebuild -version': 'Xcode 27.0\nBuild version 27A266a\n',
   'xcrun simctl list runtimes --json': JSON.stringify({ runtimes: [{ name: 'iOS 26.0', platform: 'iOS', isAvailable: true }] }),
   'xcrun simctl list devices available --json': JSON.stringify({ devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-26-0': [{}, {}] } }),
+  'ffmpeg -version': 'ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\n',
 }
 
 function deps(overrides: Partial<DoctorDeps> = {}, out = outputs): DoctorDeps {
@@ -48,5 +49,13 @@ describe('doctor', () => {
   it('names helper binaries that are not executable', async () => {
     const checks = await runChecks(deps({ isExecutable: (f) => !f.endsWith('touch-helper') }))
     expect(checks.find((c) => c.label === 'helper binaries')?.detail).toMatch(/touch-helper/)
+  })
+
+  it('treats a missing ffmpeg as a warning, not a failure', async () => {
+    const { ['ffmpeg -version']: _, ...noFfmpeg } = outputs
+    const checks = await runChecks(deps({}, noFfmpeg))
+    const ffmpeg = checks.find((c) => c.label === 'ffmpeg')!
+    expect(ffmpeg).toMatchObject({ ok: false, optional: true })
+    expect(checks.filter((c) => !c.ok && !c.optional)).toEqual([])
   })
 })

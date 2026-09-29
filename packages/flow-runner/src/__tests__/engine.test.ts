@@ -499,3 +499,16 @@ describe('rejected failure screenshot preserves classification', () => {
     expect(result.failureScreenshot).toBeUndefined()
   })
 })
+
+describe('onStep', () => {
+  it('reports each step starting and ending, and nothing for skipped steps', async () => {
+    const flow = parseFlow('name: f\nappId: a\nsteps:\n  - launchApp\n  - tapOn: Missing\n  - launchApp\n', 'f.yaml')
+    const events: string[] = []
+    await runFlow(flow, fakeDriver([[]]), {
+      defaultTimeoutMs: 50,
+      pollIntervalMs: 10,
+      onStep: (e) => events.push(e.phase === 'start' ? `start ${e.name}` : `${e.status} ${e.name}`),
+    })
+    expect(events).toEqual(['start launchApp', 'passed launchApp', 'start tapOn("Missing")', 'failed tapOn("Missing")'])
+  })
+})

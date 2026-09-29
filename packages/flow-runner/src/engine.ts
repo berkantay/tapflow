@@ -7,7 +7,8 @@ import { EnvironmentStepError, isEnvironmentStepFailure, TransientQueryError } f
 export interface FlowDriver {
   // Optional AbortSignal so a stalled query can't block the poll loop past the step deadline.
   queryUITree(signal?: AbortSignal): Promise<UIElement[]>
-  tap(x: number, y: number): Promise<void>
+  /** `label` names the element tapped, for logs and recordings. */
+  tap(x: number, y: number, label?: string): Promise<void>
   swipe(from: [number, number], to: [number, number], durationMs: number): Promise<void>
   inputText(text: string): Promise<void>
   pressKey(code: string): Promise<void>
@@ -17,9 +18,15 @@ export interface FlowDriver {
   screenshot(signal?: AbortSignal): Promise<Buffer>
 }
 
+export type StepEvent =
+  | { phase: 'start'; index: number; name: string }
+  | { phase: 'end'; index: number; name: string; status: 'passed' | 'failed'; durationMs: number; message?: string }
+
 export interface EngineOptions {
   defaultTimeoutMs?: number
   pollIntervalMs?: number
+  /** Called as each step starts and ends (not for skipped steps), e.g. to mark a recording. */
+  onStep?: (event: StepEvent) => void
 }
 
 export interface StepResult {
@@ -282,7 +289,7 @@ async function executeStep(step: Step, flow: Flow, driver: FlowDriver, timeoutMs
     case 'launchApp': return driver.launchApp()
     case 'tapOn': {
       const el = await resolveOne(driver, step.selector, timeoutMs, pollIntervalMs)
-      return driver.tap(round4(el.frame.x + el.frame.width / 2), round4(el.frame.y + el.frame.height / 2))
+      return driver.tap(round4(el.frame.x + el.frame.width / 2), round4(el.frame.y + el.frame.height / 2), el.label || el.identifier)
     }
     case 'inputText': return driver.inputText(step.text)
     case 'pressKey': return driver.pressKey(step.code)
@@ -313,14 +320,19 @@ export async function runFlow(flow: Flow, driver: FlowDriver, options: EngineOpt
       continue
     }
     const stepStart = Date.now()
+    options.onStep?.({ phase: 'start', index, name })
     try {
       await executeStep(step, flow, driver, timeoutMs, pollIntervalMs)
-      steps.push({ index, name, status: 'passed', durationMs: Date.now() - stepStart })
+      const durationMs = Date.now() - stepStart
+      steps.push({ index, name, status: 'passed', durationMs })
+      options.onStep?.({ phase: 'end', index, name, status: 'passed', durationMs })
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       failureMessage = `${name}: ${message}`
       if (failureKind === undefined) failureKind = isEnvironmentStepFailure(e) ? 'environment' : 'product'
-      steps.push({ index, name, status: 'failed', durationMs: Date.now() - stepStart, message })
+      const durationMs = Date.now() - stepStart
+      steps.push({ index, name, status: 'failed', durationMs, message })
+      options.onStep?.({ phase: 'end', index, name, status: 'failed', durationMs, message })
       failureScreenshot = await captureFailureScreenshot(driver)
     }
   }

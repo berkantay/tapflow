@@ -7,7 +7,7 @@ through their UI tree and touch input, replay deterministic flows, and record wh
 
 - **iOS Simulator only.** Android, the dashboard, the relay, streaming, audio and network control were removed.
 - **Agent-first.** An LLM agent (via the MCP server) or a flow file (via the CLI) drives the device.
-- **Recordings are an output.** A run should be able to leave a video behind for review.
+- **Recordings are an output.** A run can leave a video, a shareable export and a timeline behind for review.
 
 ## Packages
 

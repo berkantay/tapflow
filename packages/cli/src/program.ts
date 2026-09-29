@@ -32,6 +32,8 @@ export function createCli() {
     .option('--artifacts <dir>', 'Where failure screenshots go (default .tapflow/artifacts)')
     .option('--timeout <seconds>', 'Default step timeout')
     .option('--lean', 'Boot in lean mode')
+    .option('--record <dir>', 'Record each flow: full-size .mp4, a shareable .web.mp4 with tap markers, and a timeline')
+    .option('--video-width <px>', 'Width of the shareable video (default 600)')
     .action(async (action: string, files: string[], opts) => {
       if (action !== 'run') throw new Error(`unknown flow action "${action}"; usage: tapflow flow run <files...>`)
       exitWith(await cmdFlowRun(files, opts))
