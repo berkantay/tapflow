@@ -28,6 +28,7 @@ function fakeSim(tree: UIElement[] = []) {
     startRecording: vi.fn(async function (this: { recording: boolean }) { this.recording = true }),
     stopRecording: vi.fn(async () => ({ path: '/tmp/r.mp4', actionsPath: '/tmp/r.mp4.actions.json', durationMs: 1200, bytes: 10, actions: [{ t: 300, kind: 'note', text: 'bug here' }] })),
     mark: vi.fn(),
+    systemAlert: vi.fn(async (): Promise<{ title: string; elements: UIElement[] } | null> => null),
   }
 }
 
@@ -52,7 +53,7 @@ describe('tap_element', () => {
 
   it('refuses an ambiguous match and names the candidates', async () => {
     const sim = fakeSim([el('button', 'Save', 0.1), el('cell', 'Save draft', 0.5)])
-    const r = await tools(sim)('tap_element', { label: 'Sav' })
+    const r = await tools(sim)('tap_element', { text: 'Sav' })
     expect(r.isError).toBe(true)
     expect(r.content[0].text).toMatch(/2 elements matched.*button "Save".*cell "Save draft"/)
     expect(sim.tap).not.toHaveBeenCalled()
@@ -60,7 +61,7 @@ describe('tap_element', () => {
 
   it('picks by role and index when asked', async () => {
     const sim = fakeSim([el('button', 'Save', 0.1), el('cell', 'Save draft', 0.5)])
-    await tools(sim)('tap_element', { label: 'Sav', role: 'cell' })
+    await tools(sim)('tap_element', { text: 'Sav', role: 'cell' })
     expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Save draft')
   })
 
@@ -125,5 +126,47 @@ describe('recording tools', () => {
     const sim = fakeSim([el('button', 'Sign in', 0.4)])
     await tools(sim)('tap_element', { text: 'Sign in' })
     expect(sim.tap).toHaveBeenCalledWith(0.5, expect.closeTo(0.25), 'Sign in')
+  })
+})
+
+describe('tap_element and system alerts', () => {
+  const alert = {
+    title: 'Open in “Example Dev”?',
+    elements: [
+      { ...el('button', 'Cancel', 0.15), system: true },
+      { ...el('button', 'Open', 0.5), system: true },
+    ],
+  }
+
+  it('taps a button of the alert covering the app', async () => {
+    const sim = fakeSim([el('button', 'Get started')])
+    sim.systemAlert.mockResolvedValueOnce(alert)
+    const r = await tools(sim)('tap_element', { label: 'Open' })
+    expect(r.content[0].text).toBe('Tapped system alert button "Open"')
+    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Open')
+    expect(sim.uiTree).not.toHaveBeenCalled()
+  })
+
+  it('names the alert and its buttons instead of tapping underneath it', async () => {
+    const sim = fakeSim([el('button', 'Get started')])
+    sim.systemAlert.mockResolvedValueOnce(alert)
+    const r = await tools(sim)('tap_element', { text: 'Get started' })
+    expect(r.isError).toBe(true)
+    expect(r.content[0].text).toMatch(/system alert is covering the app \("Open in “Example Dev”\?"\); its buttons are "Cancel", "Open"/)
+    expect(sim.tap).not.toHaveBeenCalled()
+  })
+
+  it('treats label as exact: "Open" does not tap "Open React Native dev menu"', async () => {
+    const sim = fakeSim([el('button', 'Open React Native dev menu')])
+    const r = await tools(sim)('tap_element', { label: 'Open' })
+    expect(r.isError).toBe(true)
+    expect(sim.tap).not.toHaveBeenCalled()
+  })
+
+  it('reports the alert in query_ui_tree', async () => {
+    const sim = fakeSim([el('button', 'Get started')])
+    sim.systemAlert.mockResolvedValueOnce(alert)
+    const out = JSON.parse((await tools(sim)('query_ui_tree')).content[0].text!)
+    expect(out.systemAlert).toEqual({ title: 'Open in “Example Dev”?', buttons: ['Cancel', 'Open'] })
   })
 })

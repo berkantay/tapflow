@@ -296,3 +296,32 @@ describe('Simulator recording', () => {
     expect(recorder.abort).toHaveBeenCalled()
   })
 })
+
+describe('Simulator.systemAlert', () => {
+  const frame = (x: number, y: number, width: number, height: number) => ({ x, y, width, height })
+  const springboard = [
+    { role: 'text', label: '21:49', rawRole: 'StaticText', enabled: true, frame: frame(0.12, 0.03, 0.11, 0.02) },
+    { role: 'other', label: 'Open in “Example Dev”?', rawRole: 'Alert', enabled: true, frame: frame(0.119, 0.4496, 0.7619, 0.1382) },
+    { role: 'text', label: 'Open in “Example Dev”?', rawRole: 'StaticText', enabled: true, frame: frame(0.1905, 0.4734, 0.619, 0.0223) },
+    { role: 'button', label: 'Cancel', rawRole: 'Button', enabled: true, frame: frame(0.1571, 0.5175, 0.3333, 0.0526) },
+    { role: 'button', label: 'Open', rawRole: 'Button', enabled: true, frame: frame(0.5095, 0.5175, 0.3333, 0.0526) },
+  ]
+
+  it('returns the alert title and the buttons and text inside it, marked as system', async () => {
+    const { sim, reader } = build()
+    reader.read.mockResolvedValueOnce(springboard as never)
+    const alert = await sim.systemAlert()
+    expect(reader.read).toHaveBeenCalledWith(UDID, 'com.apple.springboard')
+    expect(alert?.title).toBe('Open in “Example Dev”?')
+    expect(alert?.elements.map((e) => `${e.role}:${e.label}`)).toEqual(['text:Open in “Example Dev”?', 'button:Cancel', 'button:Open'])
+    expect(alert?.elements.every((e) => e.system)).toBe(true)
+  })
+
+  it('is null when SpringBoard shows no alert, or cannot be read', async () => {
+    const { sim, reader } = build()
+    reader.read.mockResolvedValueOnce(springboard.slice(0, 1) as never)
+    expect(await sim.systemAlert()).toBeNull()
+    reader.read.mockRejectedValueOnce(new PlatformError('runner gone'))
+    expect(await sim.systemAlert()).toBeNull()
+  })
+})

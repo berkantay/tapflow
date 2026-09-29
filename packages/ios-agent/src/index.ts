@@ -1,5 +1,5 @@
 export { Simulator, BUTTON_NAMES, KEY_NAMES, leanSupported } from './Simulator.js'
-export type { SimulatorOptions, BootOptions, Orientation } from './Simulator.js'
+export type { SimulatorOptions, BootOptions, Orientation, SystemAlert } from './Simulator.js'
 export { SimctlWrapper } from './SimctlWrapper.js'
 export { XCUITreeReader } from './XCUITreeReader.js'
 export { LeanStore } from './LeanStore.js'

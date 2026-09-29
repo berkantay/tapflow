@@ -15,6 +15,7 @@ function sim(overrides: Partial<Record<keyof Simulator, unknown>> = {}) {
     launch: vi.fn(async () => {}),
     clearAppData: vi.fn(async () => {}),
     screenshot: vi.fn(async () => Buffer.alloc(0)),
+    systemAlert: vi.fn(async () => null),
     ...overrides,
   } as unknown as Simulator & Record<string, ReturnType<typeof vi.fn>>
 }
@@ -53,5 +54,12 @@ describe('SimulatorDriver', () => {
     const err = await new SimulatorDriver(sim()).launchApp().catch((e) => e)
     expect(err.message).toMatch(/appId/)
     expect(isEnvironmentStepFailure(err)).toBe(true)
+  })
+
+  it('shows a flow only the system alert while one covers the app', async () => {
+    const buttons = [{ role: 'button', label: 'Allow', enabled: true, system: true, frame: { x: 0.5, y: 0.5, width: 0.2, height: 0.05 } }]
+    const s = sim({ systemAlert: vi.fn(async () => ({ title: 'Allow notifications?', elements: buttons })) })
+    expect(await new SimulatorDriver(s, 'x').queryUITree()).toEqual(buttons)
+    expect(s.uiTree).not.toHaveBeenCalled()
   })
 })

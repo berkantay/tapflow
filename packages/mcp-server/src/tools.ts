@@ -105,14 +105,20 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
     'query_ui_tree',
     {
       description:
-        'Read the accessibility tree of the foreground app: elements as { role, label, identifier, frame, enabled }. ' +
+        'Read the accessibility tree of the foreground app: elements as { role, label, identifier, frame, enabled, value }. ' +
         'Frames are normalized 0-1, the same space tap and swipe take, so an element is tapped at ' +
-        '(frame.x + frame.width / 2, frame.y + frame.height / 2). Prefer this, or tap_element, over reading coordinates off a screenshot.',
+        '(frame.x + frame.width / 2, frame.y + frame.height / 2). Prefer this, or tap_element, over reading coordinates off a screenshot. ' +
+        'A system alert covering the app ("Open in …?", a permission prompt) is reported as systemAlert with its buttons; tap_element can tap them.',
       inputSchema: { bundleId: z.string().optional().describe('App to read. Defaults to the last launched app.'), device },
     },
     ({ bundleId, device: name }) => attempt('query_ui_tree', async () => {
-      const elements = await (await ctx.resolve(name)).uiTree(bundleId)
-      return ok(JSON.stringify({ count: elements.length, elements }, null, 2))
+      const sim = await ctx.resolve(name)
+      const [elements, alert] = await Promise.all([sim.uiTree(bundleId), sim.systemAlert()])
+      return ok(JSON.stringify({
+        count: elements.length,
+        ...(alert ? { systemAlert: { title: alert.title, buttons: alert.elements.filter((e) => e.role === 'button').map((e) => e.label) } } : {}),
+        elements,
+      }, null, 2))
     }),
   )
 
@@ -150,10 +156,11 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
     'tap_element',
     {
       description:
-        'Tap an element of the foreground app found in its accessibility tree, by identifier or label. ' +
-        '"text" matches an exact identifier, then an exact label, then part of a label. Narrow with role and index when several match.',
+        'Tap an element found in the accessibility tree. "id" is an exact identifier (a testID) and "label" an exact label; ' +
+        '"text" matches an exact identifier, then an exact label, then part of a label. Narrow with role and index when several match. ' +
+        'When a system alert covers the app, only its buttons can be tapped, and the error names them.',
       inputSchema: {
-        text: z.string().optional(),
+        text: z.string().optional().describe('Identifier, exact label, or part of a label'),
         id: z.string().optional().describe('Exact accessibility identifier'),
         label: z.string().optional().describe('Exact label'),
         role: z.string().optional().describe('button, cell, input, text, switch, …'),
@@ -164,9 +171,18 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
     ({ text, id, label, role, index, device: name }) => attempt('tap_element', async () => {
       if (text === undefined && id === undefined && label === undefined) return err('tap_element needs one of text, id or label')
       const sim = await ctx.resolve(name)
-      const tree = await sim.uiTree()
-      const matches = matchSelector(tree, { text, id, label, role })
-      if (matches.length === 0) return err('tap_element: no element matched; call query_ui_tree to see what is on screen')
+      const alert = await sim.systemAlert()
+      const pool = alert ? alert.elements : await sim.uiTree()
+      let matches = matchSelector(pool, { text, id, role })
+      // `label` is exact here; matchSelector's label falls back to a partial match, which is what `text` is for.
+      if (label !== undefined) matches = matches.filter((e) => e.label === label)
+      if (matches.length === 0) {
+        if (alert) {
+          const buttons = alert.elements.filter((e) => e.role === 'button').map((e) => `"${e.label}"`).join(', ')
+          return err(`tap_element: a system alert is covering the app ("${alert.title}"); its buttons are ${buttons}`)
+        }
+        return err('tap_element: no element matched; call query_ui_tree to see what is on screen')
+      }
       const target = matches[index ?? 0]
       if (!target) return err(`tap_element: index ${index} is out of range (${matches.length} matches)`)
       if (index === undefined && matches.length > 1) {
@@ -174,7 +190,7 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
       }
       const { x, y, width, height } = target.frame
       await sim.tap(x + width / 2, y + height / 2, target.label || target.identifier)
-      return ok(`Tapped ${target.role} "${target.label}"`)
+      return ok(`Tapped ${target.system ? 'system alert ' : ''}${target.role} "${target.label}"`)
     }),
   )
 

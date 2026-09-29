@@ -47,6 +47,8 @@ export interface UIElement {
   /** Holds keyboard focus. */
   focused?: boolean
   selected?: boolean
+  /** Belongs to a system alert (SpringBoard), not to the app. */
+  system?: boolean
   rawRole?: string
 }
 

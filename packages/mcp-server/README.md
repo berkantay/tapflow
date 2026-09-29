@@ -15,7 +15,11 @@ Tools: `list_devices`, `boot_device`, `shutdown_device`, `install_app`, `launch_
 `press_button`, `run_flow`, `start_recording`, `mark_recording`, `stop_recording`.
 
 - Coordinates are normalized 0-1, the space `query_ui_tree` reports frames in.
-- `tap_element` taps by identifier or label and refuses an ambiguous match, naming the candidates.
+- `tap_element` taps by `id` (exact identifier), `label` (exact label) or `text` (identifier, exact
+  label, then part of a label), and refuses an ambiguous match, naming the candidates.
+- System alerts ("Open in …?", permission prompts) are drawn by SpringBoard, not the app.
+  `query_ui_tree` reports one as `systemAlert` with its buttons, and while one is up `tap_element`
+  taps only its buttons, naming them if the selector matches something else.
 - Tools act on the device last booted or named; `--device` / `TAPFLOW_DEVICE` sets the default.
 - `start_recording` … `stop_recording` records the screen and logs every action (and `run_flow` step)
   with its time in the video. `stop_recording` returns the full video, a small shareable export with

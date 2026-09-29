@@ -32,6 +32,9 @@ export class SimulatorDriver implements FlowDriver {
 
   async queryUITree() {
     try {
+      // A system alert covers the app, so while one is up the flow sees its buttons and nothing else.
+      const alert = await this.sim.systemAlert()
+      if (alert) return alert.elements
       return await this.sim.uiTree(this.app())
     } catch (e) {
       // The app is not in the foreground yet (right after a launch, say): poll again until the step deadline.

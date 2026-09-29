@@ -42,6 +42,24 @@ const BUTTONS: Record<string, { usagePage: number; usage: number }> = {
 
 export const BUTTON_NAMES = Object.keys(BUTTONS)
 
+// System alerts ("Open in …?", permission prompts) are drawn by SpringBoard, not the app, so they
+// never appear in the app's tree.
+const SPRINGBOARD = 'com.apple.springboard'
+const ALERT_ROLES = new Set(['Alert', 'Sheet'])
+
+/** A system alert covering the screen, with its buttons and text. */
+export interface SystemAlert {
+  title: string
+  elements: UIElement[]
+}
+
+function within(inner: UIElement['frame'], outer: UIElement['frame']): boolean {
+  const e = 0.002
+  return inner.x >= outer.x - e && inner.y >= outer.y - e
+    && inner.x + inner.width <= outer.x + outer.width + e
+    && inner.y + inner.height <= outer.y + outer.height + e
+}
+
 /** Keys `pressKey` accepts. `KeyboardEvent.code` spellings are accepted as aliases. */
 export const KEY_NAMES = ['return', 'enter', 'delete', 'backspace', 'tab', 'escape', 'space']
 const KEY_ALIASES: Record<string, string> = { Enter: 'return', Backspace: 'delete', Tab: 'tab', Escape: 'escape', Space: 'space' }
@@ -231,6 +249,27 @@ export class Simulator {
         await delay(TREE_RETRY_MS)
       }
     }
+  }
+
+  /**
+   * The system alert on screen, if any: SpringBoard's alert with its buttons and text, marked
+   * `system: true`. Null when there is none, or when SpringBoard's tree cannot be read.
+   */
+  async systemAlert(): Promise<SystemAlert | null> {
+    let tree: UIElement[]
+    try {
+      tree = await this.treeReader.read(this.udid, SPRINGBOARD)
+    } catch {
+      return null
+    }
+    const alert = tree.find((e) => ALERT_ROLES.has(e.rawRole ?? ''))
+    if (!alert) return null
+    const seen = new Set<string>()
+    const elements = tree
+      .filter((e) => e !== alert && (e.role === 'button' || e.role === 'text' || e.role === 'input') && within(e.frame, alert.frame))
+      .filter((e) => { const k = `${e.role}|${e.label}|${e.frame.x}|${e.frame.y}`; if (seen.has(k)) return false; seen.add(k); return true })
+      .map((e) => ({ ...e, system: true }))
+    return { title: alert.label, elements }
   }
 
   /** Tap a normalized point. `label` names what was tapped in a recording's action log. */

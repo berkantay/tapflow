@@ -35,6 +35,12 @@ Measured on Xcode 27 / iOS 26.0 while building this, and worth keeping in mind:
   `value`, then `Selected`, `Keyboard Focused`, `Disabled`). The parser scans them in order; a
   label used to swallow a following `placeholderValue`, and an identifier followed by a flag was lost.
 
+- **System alerts live in SpringBoard's tree**, not the app's: "Open in …?" from a URL, permission
+  prompts. `systemAlert()` reads `com.apple.springboard` and returns the `Alert` (or `Sheet`) with the
+  buttons and text inside its frame. With an app in front SpringBoard's tree is only the status bar,
+  the switcher card and any alert, so the read is cheap (~100-200ms). Alerts can stack: two `openurl`
+  calls leave two "Open in …?" alerts, and one tap clears only the top one.
+
 ## Recording
 
 - `ScreenRecorder` runs `simctl io <udid> recordVideo --codec=h264 --force`. It waits for "Recording
