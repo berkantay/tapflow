@@ -12,6 +12,10 @@ export interface Selector {
   role?: string
   index?: number
   timeoutMs?: number
+  /** Match only elements of a system alert (SpringBoard), never the app's own. */
+  system?: boolean
+  /** tapOn only: tap it if it shows up, otherwise move on (a one-time screen or alert). */
+  optional?: boolean
 }
 
 export type ScrollDirection = 'up' | 'down' | 'left' | 'right'
@@ -50,15 +54,19 @@ function parseSelector(v: unknown, ctx: string): Selector {
     return { text: v }
   }
   if (isRecord(v)) {
-    const { id, label, role, index, timeout, ...rest } = v as {
-      id?: unknown; label?: unknown; role?: unknown; index?: unknown; timeout?: unknown
+    const { id, label, role, index, timeout, system, optional, ...rest } = v as {
+      id?: unknown; label?: unknown; role?: unknown; index?: unknown; timeout?: unknown; system?: unknown; optional?: unknown
     }
     const unknownKeys = Object.keys(rest)
     if (unknownKeys.length > 0) throw new ValidationError(`${ctx}: unknown selector keys: ${unknownKeys.join(', ')}`)
+    if (system !== undefined && typeof system !== 'boolean') throw new ValidationError(`${ctx}: "system" must be true or false`)
+    if (optional !== undefined && typeof optional !== 'boolean') throw new ValidationError(`${ctx}: "optional" must be true or false`)
     if (id === undefined && label === undefined && role === undefined) {
       throw new ValidationError(`${ctx}: selector needs "id", "label", or "role"`)
     }
     const selector: Selector = {}
+    if (system === true) selector.system = true
+    if (optional === true) selector.optional = true
     if (id !== undefined) {
       if (typeof id !== 'string' || id.length === 0) throw new ValidationError(`${ctx}: "id" must be a non-empty string`)
       selector.id = id
@@ -87,7 +95,7 @@ function parseSelector(v: unknown, ctx: string): Selector {
     }
     return selector
   }
-  throw new ValidationError(`${ctx}: selector must be a string or { id, label, role, index, timeout }`)
+  throw new ValidationError(`${ctx}: selector must be a string or { id, label, role, index, timeout, system, optional }`)
 }
 
 function parsePoint(v: unknown, ctx: string, key: string): [number, number] {
@@ -117,8 +125,12 @@ function parseStep(raw: unknown, ctx: string): Step {
       return { type: 'clearState', appId: value }
     }
     case 'tapOn': return { type: 'tapOn', selector: parseSelector(value, ctx) }
-    case 'assertVisible': return { type: 'assertVisible', selector: parseSelector(value, ctx) }
-    case 'assertNotVisible': return { type: 'assertNotVisible', selector: parseSelector(value, ctx) }
+    case 'assertVisible':
+    case 'assertNotVisible': {
+      const selector = parseSelector(value, ctx)
+      if (selector.optional) throw new ValidationError(`${ctx}: "optional" applies to tapOn only; an assertion is never optional`)
+      return { type: key, selector }
+    }
     case 'inputText': {
       if (typeof value !== 'string') throw new ValidationError(`${ctx}: "inputText" must be a string`)
       return { type: 'inputText', text: value }

@@ -231,10 +231,17 @@ describe('Simulator apps and text', () => {
     expect(t.reader.read).toHaveBeenCalledTimes(2)
   })
 
-  it('does not retry other tree failures', async () => {
+  it('retries a tree read that failed outright once (right after a deep link)', async () => {
     await t.sim.launch('com.example.app')
     t.reader.read.mockRejectedValueOnce(new PlatformError('UI tree query failed: fetch failed'))
-    await expect(t.sim.uiTree()).rejects.toThrow(/fetch failed/)
+    expect(await t.sim.uiTree()).toHaveLength(1)
+    expect(t.reader.read).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry other tree failures', async () => {
+    await t.sim.launch('com.example.app')
+    t.reader.read.mockRejectedValueOnce(new PlatformError('tree runner returned HTTP 500 for com.example.app'))
+    await expect(t.sim.uiTree()).rejects.toThrow(/HTTP 500/)
     expect(t.reader.read).toHaveBeenCalledTimes(1)
   })
 

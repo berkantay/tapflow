@@ -55,3 +55,26 @@ describe('recordingToFlow', () => {
     expect(yaml).toContain('# launched com.example.app')
   })
 })
+
+describe('recordingToFlow checks and alerts', () => {
+  it('turns what the agent waited for into assertions', () => {
+    const { yaml } = recordingToFlow([
+      { t: 0, kind: 'launch', bundleId: 'com.x' },
+      { t: 1, kind: 'wait', selector: { id: 'tabs-completed' }, gone: false },
+      { t: 2, kind: 'wait', selector: { text: 'Loading' }, gone: true },
+    ], { name: 'x' })
+    expect(parseFlow(yaml, 'x.yaml').steps.slice(1)).toEqual([
+      { type: 'assertVisible', selector: { id: 'tabs-completed' } },
+      { type: 'assertNotVisible', selector: { text: 'Loading' } },
+    ])
+  })
+
+  it('makes a system alert tap optional and alert-only', () => {
+    const { yaml } = recordingToFlow([
+      { t: 0, kind: 'launch', bundleId: 'com.x' },
+      { t: 1, kind: 'tap', x: 0.6, y: 0.55, label: 'Allow', selector: { label: 'Allow', system: true } },
+    ], { name: 'x' })
+    expect(parseFlow(yaml, 'x.yaml').steps[1]).toEqual({ type: 'tapOn', selector: { label: 'Allow', system: true, optional: true } })
+  })
+})
+

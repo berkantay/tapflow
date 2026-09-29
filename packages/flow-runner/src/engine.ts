@@ -98,6 +98,8 @@ function describeSelector(sel: Selector): string {
   if (sel.label !== undefined) parts.push(`label="${sel.label}"`)
   if (sel.role !== undefined) parts.push(`role=${sel.role}`)
   if (sel.index !== undefined) parts.push(`index=${sel.index}`)
+  if (sel.system) parts.push('system')
+  if (sel.optional) parts.push('optional')
   return parts.join(', ')
 }
 
@@ -132,6 +134,7 @@ function normalizeTimeoutMs(value: number, label: string): number {
 // (0-based) picks one of the remaining matches — so a label shared by e.g. a button and its inner text
 // can be disambiguated with { label, role: button }, and a label-less row with { role: cell, index }.
 export function matchSelector(tree: UIElement[], sel: Selector): UIElement[] {
+  if (sel.system) tree = tree.filter((e) => e.system === true)
   let pool: UIElement[]
   if (sel.text !== undefined) {
     const byId = tree.filter((e) => e.identifier === sel.text)
@@ -274,7 +277,12 @@ async function waitNotVisible(driver: FlowDriver, sel: Selector, timeoutMs: numb
   }
 }
 
-async function executeStep(step: Step, flow: Flow, driver: FlowDriver, timeoutMs: number, pollIntervalMs: number): Promise<void> {
+// An optional tap waits this long by default: long enough for a screen to settle, short enough that
+// a flow replayed on a device that no longer shows the one-time screen does not stall on it.
+const OPTIONAL_TAP_TIMEOUT_MS = 3_000
+
+/** Resolves with a note when the step passed without acting (an optional tap that found nothing). */
+async function executeStep(step: Step, flow: Flow, driver: FlowDriver, timeoutMs: number, pollIntervalMs: number): Promise<string | void> {
   switch (step.type) {
     case 'clearState': {
       // `parseFlow` rejects the bare form without a flow-level appId, but `runFlow` is exported and does not
@@ -288,8 +296,17 @@ async function executeStep(step: Step, flow: Flow, driver: FlowDriver, timeoutMs
     }
     case 'launchApp': return driver.launchApp()
     case 'tapOn': {
-      const el = await resolveOne(driver, step.selector, timeoutMs, pollIntervalMs)
-      return driver.tap(round4(el.frame.x + el.frame.width / 2), round4(el.frame.y + el.frame.height / 2), el.label || el.identifier)
+      let el: UIElement
+      try {
+        const sel = step.selector.optional ? { ...step.selector, timeoutMs: step.selector.timeoutMs ?? OPTIONAL_TAP_TIMEOUT_MS } : step.selector
+        el = await resolveOne(driver, sel, timeoutMs, pollIntervalMs)
+      } catch (e) {
+        // Only "never showed up" is excused: an ambiguous match or an environment failure still fails.
+        if (step.selector.optional && e instanceof StepFailure && e.message.startsWith('no element matched')) return 'not present'
+        throw e
+      }
+      await driver.tap(round4(el.frame.x + el.frame.width / 2), round4(el.frame.y + el.frame.height / 2), el.label || el.identifier)
+      return
     }
     case 'inputText': return driver.inputText(step.text)
     case 'pressKey': return driver.pressKey(step.code)
@@ -322,9 +339,9 @@ export async function runFlow(flow: Flow, driver: FlowDriver, options: EngineOpt
     const stepStart = Date.now()
     options.onStep?.({ phase: 'start', index, name })
     try {
-      await executeStep(step, flow, driver, timeoutMs, pollIntervalMs)
+      const note = await executeStep(step, flow, driver, timeoutMs, pollIntervalMs)
       const durationMs = Date.now() - stepStart
-      steps.push({ index, name, status: 'passed', durationMs })
+      steps.push({ index, name, status: 'passed', durationMs, ...(note ? { message: note } : {}) })
       options.onStep?.({ phase: 'end', index, name, status: 'passed', durationMs })
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)

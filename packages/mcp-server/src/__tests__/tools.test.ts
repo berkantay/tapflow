@@ -149,7 +149,7 @@ describe('tap_element and system alerts', () => {
     sim.systemAlert.mockResolvedValueOnce(alert)
     const r = await tools(sim)('tap_element', { label: 'Open' })
     expect(r.content[0].text).toBe('Tapped system alert button "Open"')
-    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Open', undefined)
+    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Open', { label: 'Open', system: true })
     expect(sim.uiTree).not.toHaveBeenCalled()
   })
 
@@ -239,5 +239,29 @@ describe('export_flow', () => {
     const r = await tools(fakeSim())('export_flow', { actions, path: out, name: 'go' })
     expect(r.content[0].text).toMatch(/2 steps, 0 actions kept as comments/)
     expect(fs.readFileSync(out, 'utf8')).toContain('tapOn: { id: "go" }')
+  })
+})
+
+describe('open_url with a file', () => {
+  it('opens the URL from the file and never echoes it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'url-'))
+    const file = path.join(dir, 'link')
+    fs.writeFileSync(file, 'app://?tk=s3cret\n')
+    const sim = fakeSim()
+    const r = await tools(sim)('open_url', { urlFile: file })
+    expect(sim.openUrl).toHaveBeenCalledWith('app://?tk=s3cret')
+    expect(r.content[0].text).toBe('Opened app://?tk=…')
+  })
+
+  it('needs exactly one of url or urlFile', async () => {
+    expect((await tools(fakeSim())('open_url', {})).isError).toBe(true)
+  })
+})
+
+describe('wait_for logging', () => {
+  it('logs what it found for export_flow', async () => {
+    const sim = fakeSim([el('text', 'Completed')])
+    await tools(sim)('wait_for', { id: undefined, text: 'Completed' })
+    expect(sim.mark).toHaveBeenCalledWith({ kind: 'wait', selector: { text: 'Completed' }, gone: false })
   })
 })

@@ -34,4 +34,6 @@ Tools:
 - `wait_for` polls for an element to appear (or, with `gone`, to disappear) instead of sleeping.
 - `export_flow` turns a recording's actions into a flow: taps made with `tap_element` become `tapOn`
   steps, and what a flow cannot express stays as comments. Explore once, then `run_flow` for free.
-- `open_url` replies with the URL redacted, so a login token does not land in the transcript.
+- `open_url` replies with the URL redacted; with `urlFile` the link (a login token, say) is read from
+  a file and never enters the conversation at all.
+- `wait_for` successes are logged in a recording, so `export_flow` turns them into assertions.

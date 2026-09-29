@@ -512,3 +512,44 @@ describe('onStep', () => {
     expect(events).toEqual(['start launchApp', 'passed launchApp', 'start tapOn("Missing")', 'failed tapOn("Missing")'])
   })
 })
+
+describe('optional and system taps', () => {
+  const flowOf = (steps: string) => parseFlow(`name: f\nappId: a\nsteps:\n${steps}`, 'f.yaml')
+
+  it('skips an optional tap whose element never shows up, and says so', async () => {
+    const driver = fakeDriver([[el({ label: 'Home' })]])
+    const result = await runFlow(flowOf('  - tapOn: { label: Continue, optional: true, timeout: 0.05 }\n  - tapOn: Home\n'), driver, { pollIntervalMs: 10 })
+    expect(result.status).toBe('passed')
+    expect(result.steps[0]).toMatchObject({ status: 'passed', message: 'not present' })
+    expect(driver.calls.filter((c) => c[0] === 'tap')).toHaveLength(1)
+  })
+
+  it('taps an optional element that is there', async () => {
+    const driver = fakeDriver([[el({ label: 'Continue' })]])
+    const result = await runFlow(flowOf('  - tapOn: { label: Continue, optional: true }\n'), driver, { pollIntervalMs: 10 })
+    expect(result.steps[0].message).toBeUndefined()
+    expect(driver.calls.filter((c) => c[0] === 'tap')).toHaveLength(1)
+  })
+
+  it('still fails an optional tap that is ambiguous', async () => {
+    const driver = fakeDriver([[el({ label: 'Continue' }), el({ label: 'Continue' })]])
+    const result = await runFlow(flowOf('  - tapOn: { label: Continue, optional: true }\n'), driver, { pollIntervalMs: 10 })
+    expect(result.status).toBe('failed')
+  })
+
+  it('matches only system alert elements with system: true', async () => {
+    const picture = el({ label: 'Allow', role: 'text' })
+    const alertButton = { ...el({ label: 'Allow' }), system: true }
+    const onlyPicture = fakeDriver([[picture]])
+    const skipped = await runFlow(flowOf('  - tapOn: { label: Allow, system: true, optional: true, timeout: 0.05 }\n'), onlyPicture, { pollIntervalMs: 10 })
+    expect(skipped.steps[0].message).toBe('not present')
+    const withAlert = fakeDriver([[picture, alertButton]])
+    await runFlow(flowOf('  - tapOn: { label: Allow, system: true }\n'), withAlert, { pollIntervalMs: 10 })
+    expect(withAlert.calls.filter((c) => c[0] === 'tap')).toHaveLength(1)
+  })
+
+  it('rejects optional on an assertion', () => {
+    expect(() => flowOf('  - assertVisible: { label: X, optional: true }\n')).toThrow(/tapOn only/)
+  })
+})
+

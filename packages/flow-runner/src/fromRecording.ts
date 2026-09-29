@@ -17,23 +17,37 @@ export interface RecordingToFlowResult {
 const str = (v: string) => JSON.stringify(v)
 const point = (p: [number, number]) => `[${p.map((n) => Number(n.toFixed(4))).join(', ')}]`
 
+type Sel = NonNullable<Extract<RecordedAction, { kind: 'tap' }>['selector']>
+
+// A selector as flow YAML: the bare string form for a plain `text`, the object form otherwise.
+function selectorYaml(sel: Sel, extra: string[] = []): string | null {
+  const keys = [
+    sel.role !== undefined ? `role: ${str(sel.role)}` : null,
+    sel.index !== undefined ? `index: ${sel.index}` : null,
+    sel.system ? 'system: true' : null,
+    ...extra,
+  ].filter((k): k is string => k !== null)
+  if (sel.id) return `{ ${[`id: ${str(sel.id)}`, ...keys].join(', ')} }`
+  const label = sel.label ?? sel.text
+  if (!label) return sel.role !== undefined ? `{ ${keys.join(', ')} }` : null
+  if (keys.length === 0 && !sel.label) return str(label)
+  return `{ ${[`label: ${str(label)}`, ...keys].join(', ')} }`
+}
+
 function tapStep(a: Extract<RecordedAction, { kind: 'tap' }>): string | null {
-  const sel = a.selector
-  if (sel) {
-    const extra = [sel.role !== undefined ? `role: ${str(sel.role)}` : null, sel.index !== undefined ? `index: ${sel.index}` : null].filter(Boolean)
-    if (sel.id) return `tapOn: { ${[`id: ${str(sel.id)}`, ...extra].join(', ')} }`
-    const label = sel.label ?? sel.text
-    if (label && extra.length === 0) return sel.label ? `tapOn: { label: ${str(label)} }` : `tapOn: ${str(label)}`
-    if (label) return `tapOn: { ${[`label: ${str(label)}`, ...extra].join(', ')} }`
-  }
+  // A system alert ("Open in …?", a permission prompt) shows once per install, so a replay taps it
+  // only if it is there.
+  const sel = a.selector ? selectorYaml(a.selector, a.selector.system ? ['optional: true'] : []) : null
+  if (sel) return `tapOn: ${sel}`
   return a.label ? `tapOn: ${str(a.label)}` : null
 }
 
 /**
  * Turn a recording's action log into a flow: explore once with an agent, replay it for free after.
- * Taps found by selector become `tapOn` steps; a coordinate tap, a hardware button or a note has no
- * flow step and is kept as a comment where it happened, so nothing is silently dropped. The result
- * is checked with the flow parser before it is returned.
+ * Taps found by selector become `tapOn` steps (optional and alert-only for system alerts), and what
+ * the agent waited for becomes `assertVisible` / `assertNotVisible`. A coordinate tap, a hardware
+ * button or a note has no flow step and is kept as a comment where it happened, so nothing is
+ * silently dropped. The result is checked with the flow parser before it is returned.
  */
 export function recordingToFlow(actions: RecordedAction[], options: RecordingToFlowOptions): RecordingToFlowResult {
   const appId = options.appId ?? actions.find((a): a is Extract<RecordedAction, { kind: 'launch' }> => a.kind === 'launch')?.bundleId
@@ -66,6 +80,12 @@ export function recordingToFlow(actions: RecordedAction[], options: RecordingToF
         const s = tapStep(a)
         if (s) step(s)
         else comment(`tap at (${a.x.toFixed(2)}, ${a.y.toFixed(2)}) had no selector; replace with a tapOn`)
+        break
+      }
+      case 'wait': {
+        // What the agent waited for is what it expected to see: the flow's checks.
+        const sel = selectorYaml(a.selector)
+        if (sel) step(`${a.gone ? 'assertNotVisible' : 'assertVisible'}: ${sel}`)
         break
       }
       case 'swipe':

@@ -253,13 +253,14 @@ export class Simulator {
   async uiTree(bundleId: string | undefined = this.foregroundBundleId ?? undefined): Promise<UIElement[]> {
     bundleId = this.requireBundle(bundleId)
     // An app coming back to the foreground answers with an empty query chain for a moment (measured
-    // right after a home press and a relaunch), so an unexpected response is retried briefly.
+    // right after a home press and a relaunch), and a read right after a deep link opens can fail
+    // outright once ("fetch failed", then fine); both are retried briefly.
     const deadline = Date.now() + TREE_SETTLE_MS
     for (;;) {
       try {
         return await this.treeReader.read(this.udid, bundleId)
       } catch (e) {
-        if (!(e instanceof PlatformError) || !/unexpected response/.test(e.message) || Date.now() >= deadline) throw e
+        if (!(e instanceof PlatformError) || !/unexpected response|fetch failed/.test(e.message) || Date.now() >= deadline) throw e
         await delay(TREE_RETRY_MS)
       }
     }

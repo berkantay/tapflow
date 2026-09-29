@@ -150,10 +150,22 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
 
   server.registerTool(
     'open_url',
-    { description: 'Open a URL or deep link on the device.', inputSchema: { url: z.string(), device } },
-    ({ url, device: name }) => attempt('open_url', async () => {
-      await (await ctx.resolve(name)).openUrl(url)
-      return ok(`Opened ${redactUrl(url)}`)
+    {
+      description:
+        'Open a URL or deep link on the device. For a link that carries a secret (a login token), write it to a file and pass ' +
+        'urlFile instead: the link then never appears in the conversation, and replies and recordings show it redacted.',
+      inputSchema: {
+        url: z.string().optional(),
+        urlFile: z.string().optional().describe('A file whose content is the URL'),
+        device,
+      },
+    },
+    ({ url, urlFile, device: name }) => attempt('open_url', async () => {
+      if ((url === undefined) === (urlFile === undefined)) return err('open_url needs exactly one of url or urlFile')
+      const target = url ?? fs.readFileSync(urlFile!, 'utf-8').trim()
+      if (!target) return err(`open_url: ${urlFile} is empty`)
+      await (await ctx.resolve(name)).openUrl(target)
+      return ok(`Opened ${redactUrl(target)}`)
     }),
   )
 
@@ -240,7 +252,7 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
       const { x, y, width, height } = target.frame
       // The selector goes to the recording's log, so export_flow can replay this tap as a tapOn step.
       const selector = { ...(id !== undefined ? { id } : {}), ...(label !== undefined ? { label } : {}), ...(text !== undefined ? { text } : {}), ...(role !== undefined ? { role } : {}), ...(index !== undefined ? { index } : {}) }
-      await sim.tap(x + width / 2, y + height / 2, target.label || target.identifier, target.system ? undefined : selector)
+      await sim.tap(x + width / 2, y + height / 2, target.label || target.identifier, target.system ? { label: target.label, system: true } : selector)
       return ok(`Tapped ${target.system ? 'system alert ' : ''}${target.role} "${target.label}"`)
     }),
   )
@@ -269,6 +281,9 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
           last = await findElements(sim, { text, id, label, role })
           if (gone ? last.matches.length === 0 : last.matches.length > 0) {
             const waited = Date.now() - started
+            // Logged so export_flow can turn what the agent waited for into the flow's assertions.
+            const selector = { ...(id !== undefined ? { id } : {}), ...(label !== undefined ? { label } : {}), ...(text !== undefined ? { text } : {}), ...(role !== undefined ? { role } : {}) }
+            sim.mark({ kind: 'wait', selector, gone: gone === true })
             return ok(gone ? `Gone after ${waited}ms` : `Found ${last.matches[0].role} "${last.matches[0].label}" after ${waited}ms`)
           }
         } catch {

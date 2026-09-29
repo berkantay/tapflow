@@ -93,6 +93,10 @@ function describe(a: RecordedAction): string | null {
   switch (a.kind) {
     case 'tap': return a.label ? `tap "${a.label}"` : `tap (${a.x.toFixed(2)}, ${a.y.toFixed(2)})`
     case 'swipe': return `swipe (${a.from.map((v) => v.toFixed(2)).join(', ')}) → (${a.to.map((v) => v.toFixed(2)).join(', ')})`
+    case 'wait': {
+      const what = a.selector.id ?? a.selector.label ?? a.selector.text ?? a.selector.role ?? '?'
+      return `${a.gone ? 'gone' : 'saw'} "${what}"`
+    }
     case 'type': return `type ${JSON.stringify(a.text)}`
     case 'key': return `key ${a.name}`
     case 'button': return `button ${a.name}`

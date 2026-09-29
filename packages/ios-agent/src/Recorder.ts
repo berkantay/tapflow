@@ -13,12 +13,15 @@ export interface TapSelector {
   text?: string
   role?: string
   index?: number
+  /** The element belonged to a system alert. */
+  system?: boolean
 }
 
 /** Something that happened on the device while it was being recorded, `t` ms after the video's first frame. */
 export type RecordedAction =
   | { t: number; kind: 'tap'; x: number; y: number; label?: string; selector?: TapSelector }
   | { t: number; kind: 'swipe'; from: [number, number]; to: [number, number]; durationMs: number }
+  | { t: number; kind: 'wait'; selector: TapSelector; gone: boolean }
   | { t: number; kind: 'type'; text: string }
   | { t: number; kind: 'key'; name: string }
   | { t: number; kind: 'button'; name: string }
