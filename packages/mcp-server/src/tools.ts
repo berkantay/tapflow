@@ -276,14 +276,18 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
       const started = Date.now()
       const deadline = started + (timeoutMs ?? 10_000)
       let last: { alert: SystemAlert | null; matches: UIElement[] } | undefined
+      let everMatched = false
       for (;;) {
         try {
           last = await findElements(sim, { text, id, label, role })
+          if (last.matches.length > 0) everMatched = true
           if (gone ? last.matches.length === 0 : last.matches.length > 0) {
             const waited = Date.now() - started
             // Logged so export_flow can turn what the agent waited for into the flow's assertions.
             const selector = { ...(id !== undefined ? { id } : {}), ...(label !== undefined ? { label } : {}), ...(text !== undefined ? { text } : {}), ...(role !== undefined ? { role } : {}) }
             sim.mark({ kind: 'wait', selector, gone: gone === true })
+            // A "gone" wait on a selector that never matched proves nothing: often a typo or a case mismatch.
+            if (gone && !everMatched) return ok(`Not on screen after ${waited}ms, but it never matched at all: check the selector (id and label are exact and case-sensitive; text ignores case)`)
             return ok(gone ? `Gone after ${waited}ms` : `Found ${last.matches[0].role} "${last.matches[0].label}" after ${waited}ms`)
           }
         } catch {

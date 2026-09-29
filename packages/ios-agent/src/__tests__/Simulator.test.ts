@@ -233,7 +233,7 @@ describe('Simulator apps and text', () => {
 
   it('retries a tree read that failed outright once (right after a deep link)', async () => {
     await t.sim.launch('com.example.app')
-    t.reader.read.mockRejectedValueOnce(new PlatformError('UI tree query failed: fetch failed'))
+    t.reader.read.mockRejectedValueOnce(new PlatformError('UI tree query failed: the UI-tree runner is not answering (fetch failed); it may be restarting'))
     expect(await t.sim.uiTree()).toHaveLength(1)
     expect(t.reader.read).toHaveBeenCalledTimes(2)
   })

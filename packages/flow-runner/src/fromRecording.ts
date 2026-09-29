@@ -28,10 +28,10 @@ function selectorYaml(sel: Sel, extra: string[] = []): string | null {
     ...extra,
   ].filter((k): k is string => k !== null)
   if (sel.id) return `{ ${[`id: ${str(sel.id)}`, ...keys].join(', ')} }`
-  const label = sel.label ?? sel.text
-  if (!label) return sel.role !== undefined ? `{ ${keys.join(', ')} }` : null
-  if (keys.length === 0 && !sel.label) return str(label)
-  return `{ ${[`label: ${str(label)}`, ...keys].join(', ')} }`
+  if (sel.label) return `{ ${[`label: ${str(sel.label)}`, ...keys].join(', ')} }`
+  // `text` keeps its meaning (identifier, exact label, then part of a label); a bare string when alone.
+  if (sel.text) return keys.length === 0 ? str(sel.text) : `{ ${[`text: ${str(sel.text)}`, ...keys].join(', ')} }`
+  return sel.role !== undefined ? `{ ${keys.join(', ')} }` : null
 }
 
 function tapStep(a: Extract<RecordedAction, { kind: 'tap' }>): string | null {
@@ -56,7 +56,14 @@ export function recordingToFlow(actions: RecordedAction[], options: RecordingToF
   lines.push('steps:')
   let steps = 0
   let skipped = 0
-  const step = (s: string) => { lines.push(`  - ${s}`); steps++ }
+  let lastStep: string | undefined
+  const step = (s: string) => {
+    // A retried wait_for leaves the same check twice in a row; once is enough.
+    if (s === lastStep && s.startsWith('assert')) return
+    lines.push(`  - ${s}`)
+    steps++
+    lastStep = s
+  }
   const comment = (s: string) => { lines.push(`  # ${s.replace(/\n/g, ' ')}`); skipped++ }
 
   for (const a of actions) {
@@ -66,7 +73,8 @@ export function recordingToFlow(actions: RecordedAction[], options: RecordingToF
         else comment(`launched ${a.bundleId} (a flow launches only its appId)`)
         break
       case 'terminate':
-        comment(`quit ${a.bundleId}`)
+        if (a.bundleId === appId) step('stopApp')
+        else comment(`quit ${a.bundleId}`)
         break
       case 'openUrl': {
         // Redacted again here, not only when recorded: flows get committed, and a log written
@@ -101,7 +109,7 @@ export function recordingToFlow(actions: RecordedAction[], options: RecordingToF
         comment(`pressed the ${a.name} button (no flow step for hardware buttons)`)
         break
       case 'note':
-        lines.push(`  # MARK: ${a.text.replace(/\n/g, ' ')} (an assertVisible here would check it)`)
+        lines.push(`  # MARK: ${a.text.replace(/\n/g, ' ')}${lastStep?.startsWith('assert') ? ' (checked by the step above)' : ' (add an assertVisible here to check it)'}`)
         break
       case 'step':
         break

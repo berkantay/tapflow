@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { UIElement } from '@tapflowio/agent-core'
-import { runFlow, type FlowDriver } from '../engine.js'
+import { matchSelector, runFlow, type FlowDriver } from '../engine.js'
 import { parseFlow } from '../schema.js'
 import { EnvironmentStepError, TransientQueryError } from '../errors.js'
 
@@ -27,6 +27,7 @@ function fakeDriver(trees: UIElement[][]): FlowDriver & { calls: Array<[string, 
     pressKey: vi.fn(async (code: string) => { calls.push(['pressKey', code]) }),
     openUrl: vi.fn(async (url: string) => { calls.push(['openUrl', url]) }),
     launchApp: vi.fn(async () => { calls.push(['launchApp']) }),
+    stopApp: vi.fn(async (appId: string) => { calls.push(['stopApp', appId]) }),
     clearState: vi.fn(async (appId: string) => { calls.push(['clearState', appId]) }),
     screenshot: vi.fn(async () => Buffer.from('PNG')),
   }
@@ -550,6 +551,44 @@ describe('optional and system taps', () => {
 
   it('rejects optional on an assertion', () => {
     expect(() => flowOf('  - assertVisible: { label: X, optional: true }\n')).toThrow(/tapOn only/)
+  })
+})
+
+describe('stopApp, text selectors, and settled screens', () => {
+  const flowOf2 = (steps: string) => parseFlow(`name: f\nappId: com.x\nsteps:\n${steps}`, 'f.yaml')
+
+  it('quits the flow app, so launchApp after it starts cold', async () => {
+    const driver = fakeDriver([[]])
+    await runFlow(flowOf2('  - stopApp\n  - launchApp\n'), driver, OPTS)
+    expect(driver.calls).toEqual([['stopApp', 'com.x'], ['launchApp']])
+  })
+
+  it('refuses stopApp without a flow appId', () => {
+    expect(() => parseFlow('name: f\nsteps:\n  - stopApp\n', 'f.yaml')).toThrow(/requires a flow-level appId/)
+  })
+
+  it('accepts text in the object form, with its fuzzy meaning', async () => {
+    const driver = fakeDriver([[el({ label: 'Example Dev, http://10.0.0.5:8123' }), el({ label: 'Example Dev, http://10.0.0.5:8124', role: 'text' })]])
+    const result = await runFlow(flowOf2('  - tapOn: { text: ":8123", role: button }\n'), driver, OPTS)
+    expect(result.status).toBe('passed')
+  })
+
+  it('refuses text combined with id or label', () => {
+    expect(() => flowOf2('  - tapOn: { text: a, label: b }\n')).toThrow(/cannot be combined/)
+  })
+
+  it('ignores case in the partial text match only', () => {
+    const tree = [el({ label: 'DEVELOPMENT SERVERS' })]
+    expect(matchSelector(tree, { text: 'Development Servers' })).toHaveLength(1)
+    expect(matchSelector(tree, { label: 'Development Servers' })).toHaveLength(0)
+  })
+
+  it('gives up an optional tap early once the screen has settled', async () => {
+    const driver = fakeDriver([[el({ label: 'Home' })]])
+    const started = Date.now()
+    const result = await runFlow(flowOf2('  - tapOn: { label: Continue, optional: true, timeout: 10 }\n'), driver, { pollIntervalMs: 50 })
+    expect(result.steps[0]).toMatchObject({ status: 'passed', message: 'not present' })
+    expect(Date.now() - started).toBeLessThan(3000)
   })
 })
 

@@ -192,7 +192,7 @@ export class XCUITreeReader {
       text = await r.text()
     } catch (e) {
       if (e instanceof PlatformError) throw e
-      throw new PlatformError(`UI tree query failed: ${(e as Error).message}`)
+      throw new PlatformError(`UI tree query failed: the UI-tree runner is not answering (${(e as Error).message}); it may be restarting, so retry in a few seconds`)
     }
     // Guard against a garbage / wrong-bundleId body silently parsing to an empty
     // tree — consumers must see an error, never a false "screen has no elements".
@@ -218,7 +218,7 @@ export class XCUITreeReader {
     try {
       r = await fetch(`http://localhost:${port}${route}`, { signal: AbortSignal.timeout(60_000) })
     } catch (e) {
-      throw new PlatformError(`${what} failed: ${(e as Error).message}`)
+      throw new PlatformError(`${what} failed: the UI-tree runner is not answering (${(e as Error).message}); it may be restarting, so retry in a few seconds`)
     }
     if (!r.ok) throw new PlatformError(`${what} failed: ${(await r.text()).trim() || `HTTP ${r.status}`}`)
   }

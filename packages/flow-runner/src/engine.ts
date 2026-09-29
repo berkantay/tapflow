@@ -14,6 +14,8 @@ export interface FlowDriver {
   pressKey(code: string): Promise<void>
   openUrl(url: string): Promise<void>
   launchApp(): Promise<void>
+  /** Quit the app; not running is fine. With launchApp after it, the flow starts cold. */
+  stopApp(appId: string): Promise<void>
   clearState(appId: string): Promise<void>
   screenshot(signal?: AbortSignal): Promise<Buffer>
 }
@@ -107,6 +109,7 @@ function describeStep(step: Step): string {
   switch (step.type) {
     case 'clearState': return step.appId ? `clearState(${step.appId})` : 'clearState'
     case 'launchApp': return 'launchApp'
+    case 'stopApp': return 'stopApp'
     case 'tapOn': return `tapOn(${describeSelector(step.selector)})`
     case 'inputText': return `inputText("${step.text}")`
     case 'pressKey': return `pressKey(${step.code})`
@@ -143,7 +146,8 @@ export function matchSelector(tree: UIElement[], sel: Selector): UIElement[] {
       ? byId
       : exact.length > 0
         ? exact
-        : tree.filter((e) => sel.text !== undefined && sel.text.length > 0 && e.label.includes(sel.text))
+        // The partial match ignores case: labels are often styled ("DEVELOPMENT SERVERS").
+        : tree.filter((e) => sel.text !== undefined && sel.text.length > 0 && e.label.toLowerCase().includes(sel.text.toLowerCase()))
   } else {
     pool = tree
     if (sel.id !== undefined) pool = pool.filter((e) => e.identifier === sel.id)
@@ -206,16 +210,27 @@ async function waitForNextPoll(deadline: number, pollIntervalMs: number, base: s
   if (Date.now() >= deadline) throw deadlineError(base, lastError, sawTree)
 }
 
+// A screen whose tree has not changed for this long is taken as settled: an optional tap whose
+// element is not on a settled screen gives up instead of waiting out its whole timeout.
+const SETTLED_MS = 1_000
+
+function treeSignature(tree: UIElement[]): string {
+  return tree.map((e) => `${e.role}|${e.label}|${e.identifier ?? ''}|${e.frame.x},${e.frame.y}`).join(';')
+}
+
 async function resolveOne(
   driver: FlowDriver,
   sel: Selector,
   timeoutMs: number,
   pollIntervalMs: number,
+  { giveUpWhenSettled = false } = {},
 ): Promise<UIElement> {
   const waitMs = normalizeTimeoutMs(sel.timeoutMs ?? timeoutMs, 'selector timeout')
   const deadline = Date.now() + waitMs
   let lastError: TransientQueryError | undefined
   let sawTree = false
+  let signature: string | undefined
+  let stableSince = 0
   for (;;) {
     const q = await queryOrRetry(driver, deadline)
     if ('tree' in q) {
@@ -223,6 +238,11 @@ async function resolveOne(
       lastError = undefined // a successful query clears any earlier transient error
       const matches = matchSelector(q.tree, sel)
       if (matches.length === 1) return matches[0]
+      if (giveUpWhenSettled && matches.length === 0) {
+        const now = treeSignature(q.tree)
+        if (now !== signature) { signature = now; stableSince = Date.now() }
+        else if (Date.now() - stableSince >= SETTLED_MS) throw new StepFailure(`no element matched ${describeSelector(sel)} on a settled screen`)
+      }
       if (matches.length > 1) {
         const described = matches.slice(0, 5).map((m) => `${m.role} "${m.label}"${m.identifier ? ` id=${m.identifier}` : ''}`).join(' | ')
         throw new StepFailure(`${matches.length} elements match ${describeSelector(sel)} — add an index or a more specific role/label (candidates: ${described})`)
@@ -295,11 +315,15 @@ async function executeStep(step: Step, flow: Flow, driver: FlowDriver, timeoutMs
       return
     }
     case 'launchApp': return driver.launchApp()
+    case 'stopApp': {
+      if (!flow.appId) throw new StepFailure('stopApp needs a flow-level "appId"')
+      return driver.stopApp(flow.appId)
+    }
     case 'tapOn': {
       let el: UIElement
       try {
         const sel = step.selector.optional ? { ...step.selector, timeoutMs: step.selector.timeoutMs ?? OPTIONAL_TAP_TIMEOUT_MS } : step.selector
-        el = await resolveOne(driver, sel, timeoutMs, pollIntervalMs)
+        el = await resolveOne(driver, sel, timeoutMs, pollIntervalMs, { giveUpWhenSettled: step.selector.optional === true })
       } catch (e) {
         // Only "never showed up" is excused: an ambiguous match or an environment failure still fails.
         if (step.selector.optional && e instanceof StepFailure && e.message.startsWith('no element matched')) return 'not present'

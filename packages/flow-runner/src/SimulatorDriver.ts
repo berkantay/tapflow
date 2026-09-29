@@ -50,6 +50,7 @@ export class SimulatorDriver implements FlowDriver {
   pressKey(code: string) { return this.guard(() => this.sim.pressKey(code, this.app())) }
   openUrl(url: string) { return this.guard(() => this.sim.openUrl(url)) }
   launchApp() { return this.guard(() => this.sim.launch(this.app())) }
+  stopApp(appId: string) { return this.guard(() => this.sim.terminate(appId)) }
   clearState(appId: string) { return this.guard(() => this.sim.clearAppData(appId)) }
   screenshot() { return this.guard(() => this.sim.screenshot()) }
 }

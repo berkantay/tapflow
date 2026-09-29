@@ -23,6 +23,7 @@ export type ScrollDirection = 'up' | 'down' | 'left' | 'right'
 export type Step =
   | { type: 'clearState'; appId?: string }
   | { type: 'launchApp' }
+  | { type: 'stopApp' }
   | { type: 'tapOn'; selector: Selector }
   | { type: 'inputText'; text: string }
   | { type: 'pressKey'; code: string }
@@ -54,17 +55,24 @@ function parseSelector(v: unknown, ctx: string): Selector {
     return { text: v }
   }
   if (isRecord(v)) {
-    const { id, label, role, index, timeout, system, optional, ...rest } = v as {
-      id?: unknown; label?: unknown; role?: unknown; index?: unknown; timeout?: unknown; system?: unknown; optional?: unknown
+    const { text, id, label, role, index, timeout, system, optional, ...rest } = v as {
+      text?: unknown; id?: unknown; label?: unknown; role?: unknown; index?: unknown; timeout?: unknown; system?: unknown; optional?: unknown
     }
     const unknownKeys = Object.keys(rest)
     if (unknownKeys.length > 0) throw new ValidationError(`${ctx}: unknown selector keys: ${unknownKeys.join(', ')}`)
     if (system !== undefined && typeof system !== 'boolean') throw new ValidationError(`${ctx}: "system" must be true or false`)
     if (optional !== undefined && typeof optional !== 'boolean') throw new ValidationError(`${ctx}: "optional" must be true or false`)
-    if (id === undefined && label === undefined && role === undefined) {
-      throw new ValidationError(`${ctx}: selector needs "id", "label", or "role"`)
+    if (text !== undefined && (id !== undefined || label !== undefined)) {
+      throw new ValidationError(`${ctx}: "text" cannot be combined with "id" or "label"`)
+    }
+    if (text === undefined && id === undefined && label === undefined && role === undefined) {
+      throw new ValidationError(`${ctx}: selector needs "text", "id", "label", or "role"`)
     }
     const selector: Selector = {}
+    if (text !== undefined) {
+      if (typeof text !== 'string' || text.length === 0) throw new ValidationError(`${ctx}: "text" must be a non-empty string`)
+      selector.text = text
+    }
     if (system === true) selector.system = true
     if (optional === true) selector.optional = true
     if (id !== undefined) {
@@ -95,7 +103,7 @@ function parseSelector(v: unknown, ctx: string): Selector {
     }
     return selector
   }
-  throw new ValidationError(`${ctx}: selector must be a string or { id, label, role, index, timeout, system, optional }`)
+  throw new ValidationError(`${ctx}: selector must be a string or { text, id, label, role, index, timeout, system, optional }`)
 }
 
 function parsePoint(v: unknown, ctx: string, key: string): [number, number] {
@@ -110,6 +118,7 @@ function parseStep(raw: unknown, ctx: string): Step {
   if (typeof raw === 'string') {
     if (raw === 'clearState') return { type: 'clearState' }
     if (raw === 'launchApp') return { type: 'launchApp' }
+    if (raw === 'stopApp') return { type: 'stopApp' }
     if (raw === 'scroll') return { type: 'scroll', direction: 'down' }
     throw new ValidationError(`${ctx}: unknown step "${raw}"`)
   }
@@ -196,6 +205,9 @@ export function parseFlow(yamlText: string, file: string): Flow {
   for (const [i, step] of parsedSteps.entries()) {
     if (step.type === 'clearState' && !step.appId && !appId) {
       throw new ValidationError(`${file}: steps[${i}]: bare "clearState" requires a flow-level appId`)
+    }
+    if (step.type === 'stopApp' && !appId) {
+      throw new ValidationError(`${file}: steps[${i}]: "stopApp" requires a flow-level appId`)
     }
   }
 

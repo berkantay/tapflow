@@ -14,6 +14,7 @@ function sim(overrides: Partial<Record<keyof Simulator, unknown>> = {}) {
     openUrl: vi.fn(async () => {}),
     launch: vi.fn(async () => {}),
     clearAppData: vi.fn(async () => {}),
+    terminate: vi.fn(async () => {}),
     screenshot: vi.fn(async () => Buffer.alloc(0)),
     systemAlert: vi.fn(async () => null),
     ...overrides,

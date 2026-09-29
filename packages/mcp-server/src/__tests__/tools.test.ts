@@ -193,6 +193,12 @@ describe('wait_for', () => {
     expect(r.content[0].text).toMatch(/^Gone after/)
   })
 
+  it('warns when a gone wait never matched anything', async () => {
+    const sim = fakeSim([el('text', 'DEVELOPMENT SERVERS')])
+    const r = await tools(sim)('wait_for', { label: 'Development Servers', gone: true })
+    expect(r.content[0].text).toMatch(/never matched at all: check the selector/)
+  })
+
   it('times out naming a system alert that is in the way', async () => {
     const sim = fakeSim([el('text', 'Home')])
     sim.systemAlert.mockResolvedValue({ title: 'Allow notifications?', elements: [{ ...el('button', 'Allow'), system: true }] })

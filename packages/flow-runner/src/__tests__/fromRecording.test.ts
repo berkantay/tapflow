@@ -78,3 +78,32 @@ describe('recordingToFlow checks and alerts', () => {
   })
 })
 
+describe('recordingToFlow round trips', () => {
+  it('keeps text as text, turns quitting the app into stopApp, and drops a repeated check', () => {
+    const { yaml } = recordingToFlow([
+      { t: 0, kind: 'terminate', bundleId: 'com.x' },
+      { t: 1, kind: 'launch', bundleId: 'com.x' },
+      { t: 2, kind: 'wait', selector: { id: 'push' }, gone: false },
+      { t: 3, kind: 'wait', selector: { id: 'push' }, gone: false },
+      { t: 4, kind: 'tap', x: 0.5, y: 0.5, label: 'Example Dev, :8123', selector: { text: ':8123', role: 'button' } },
+      { t: 5, kind: 'note', text: 'done' },
+    ], { name: 'x', appId: 'com.x' })
+    expect(parseFlow(yaml, 'x.yaml').steps).toEqual([
+      { type: 'stopApp' },
+      { type: 'launchApp' },
+      { type: 'assertVisible', selector: { id: 'push' } },
+      { type: 'tapOn', selector: { text: ':8123', role: 'button' } },
+    ])
+    expect(yaml).toContain('# MARK: done (add an assertVisible here to check it)')
+  })
+
+  it('notes when a mark is already checked by the assertion before it', () => {
+    const { yaml } = recordingToFlow([
+      { t: 0, kind: 'launch', bundleId: 'com.x' },
+      { t: 1, kind: 'wait', selector: { text: 'Nothing here yet' }, gone: false },
+      { t: 2, kind: 'note', text: 'Completed tab shows' },
+    ], { name: 'x' })
+    expect(yaml).toContain('# MARK: Completed tab shows (checked by the step above)')
+  })
+})
+

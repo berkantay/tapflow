@@ -19,6 +19,9 @@ const INPUT_READY_TIMEOUT_MS = 5_000
 const INPUT_READY_POLL_MS = 20
 const SWIPE_STEPS = 8
 const TREE_SETTLE_MS = 3_000
+// The runner itself can stop answering for a while and come back (measured: ~18s right after the app
+// finished loading), so an outright failed read gets longer than an empty one.
+const TREE_UNREACHABLE_MS = 20_000
 const TREE_RETRY_MS = 250
 
 export type Orientation = 'portrait' | 'landscapeLeft' | 'landscapeRight' | 'portraitUpsideDown'
@@ -255,12 +258,14 @@ export class Simulator {
     // An app coming back to the foreground answers with an empty query chain for a moment (measured
     // right after a home press and a relaunch), and a read right after a deep link opens can fail
     // outright once ("fetch failed", then fine); both are retried briefly.
-    const deadline = Date.now() + TREE_SETTLE_MS
+    const started = Date.now()
     for (;;) {
       try {
         return await this.treeReader.read(this.udid, bundleId)
       } catch (e) {
-        if (!(e instanceof PlatformError) || !/unexpected response|fetch failed/.test(e.message) || Date.now() >= deadline) throw e
+        if (!(e instanceof PlatformError)) throw e
+        const window = /unexpected response/.test(e.message) ? TREE_SETTLE_MS : /not answering/.test(e.message) ? TREE_UNREACHABLE_MS : 0
+        if (Date.now() - started >= window) throw e
         await delay(TREE_RETRY_MS)
       }
     }
