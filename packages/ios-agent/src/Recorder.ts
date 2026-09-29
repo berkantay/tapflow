@@ -31,6 +31,15 @@ export interface Recording {
   actions: RecordedAction[]
 }
 
+// Query values that look like credentials are replaced before a URL reaches the action log, which is
+// meant to be shared (a PR comment, a job log). Magic-link tokens are the common case.
+const SENSITIVE_PARAM = /([?&#](?:[\w.-]*(?:token|secret|password|passwd|auth|session|code|key|sig)[\w.-]*|tk|otp|jwt)=)[^&#]*/gi
+
+/** `url` with the values of credential-like query parameters replaced by `…`. */
+export function redactUrl(url: string): string {
+  return url.replace(SENSITIVE_PARAM, '$1…')
+}
+
 export type RecordProcessFactory = (udid: string, path: string) => ChildProcess
 
 const defaultFactory: RecordProcessFactory = (udid, path) =>

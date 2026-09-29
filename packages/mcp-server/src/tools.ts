@@ -305,7 +305,7 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
       }
       if (doExport !== false) {
         try {
-          const web = await exportVideo(rec.path, rec.path.replace(/\.(mp4|mov)$/i, '.web.mp4'), rec.actions, { width })
+          const web = await exportVideo(rec.path, rec.path.replace(/\.(mp4|mov)$/i, '.web.mp4'), rec.actions, { width, durationMs: rec.durationMs })
           result.shareable = web.path
           result.shareableBytes = web.bytes
         } catch (e) {

@@ -49,6 +49,11 @@ Measured on Xcode 27 / iOS 26.0 while building this, and worth keeping in mind:
 - The raw file is full resolution and variable frame rate (a frame only when the screen changes),
   about 0.5-0.7 MB a second while things move. `exportVideo` re-encodes to 600px wide, constant 30fps,
   `+faststart`, which comes out 20-30x smaller.
+- **The raw file ends at the last screen change**, not when recording stopped: with a still last
+  screen, 75s of recording came out as 68.6s of video and the final mark fell past the end.
+  `exportVideo` takes `durationMs` and holds the last frame out to it (`tpad=stop_mode=clone`).
+- **URLs are redacted in the action log** (`redactUrl`): credential-like query values (`tk`,
+  `*token*`, `code`, `session`, …) become `…`, since timelines are meant to be shared.
 - Markers are `drawbox` squares, not captions: the Homebrew ffmpeg build has no `drawtext` or
   `subtitles` filter, so text is not burned in. The step timeline is written as text instead.
 - One recording per simulator at a time; `close()` aborts one in progress, `shutdown()` finishes it.

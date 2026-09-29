@@ -13,7 +13,23 @@ export interface ExportOptions {
   crf?: number
   /** Burn a marker in where each tap and swipe landed. Default true when actions are given. */
   markers?: boolean
+  /**
+   * How long the recording really ran. simctl writes a frame only when the screen changes, so a
+   * still last screen is cut off; the export holds the last frame out to this length.
+   */
+  durationMs?: number
   ffmpeg?: string
+  ffprobe?: string
+}
+
+async function probeDurationMs(input: string, ffprobe: string): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', input])
+    const seconds = Number(stdout.trim())
+    return Number.isFinite(seconds) ? Math.round(seconds * 1000) : null
+  } catch {
+    return null
+  }
 }
 
 const MARKER_MS = 600
@@ -50,7 +66,13 @@ export async function exportVideo(input: string, output: string, actions: Record
   const width = options.width ?? 600
   const crf = options.crf ?? 30
   const withMarkers = options.markers ?? actions.length > 0
-  const filters = [`scale=${width}:-2`, 'fps=30', ...(withMarkers ? markerFilters(actions, width) : []), 'format=yuv420p']
+  const pad: string[] = []
+  if (options.durationMs !== undefined) {
+    const videoMs = await probeDurationMs(input, options.ffprobe ?? 'ffprobe')
+    const missing = videoMs === null ? 0 : options.durationMs - videoMs
+    if (missing > 100) pad.push(`tpad=stop_mode=clone:stop_duration=${(missing / 1000).toFixed(3)}`)
+  }
+  const filters = [...pad, `scale=${width}:-2`, 'fps=30', ...(withMarkers ? markerFilters(actions, width) : []), 'format=yuv420p']
   const args = ['-y', '-v', 'error', '-i', input, '-vf', filters.join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-movflags', '+faststart', '-an', output]
   try {
     await execFileAsync(options.ffmpeg ?? 'ffmpeg', args, { maxBuffer: 16 * 1024 * 1024, timeout: 300_000 })

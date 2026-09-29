@@ -137,6 +137,9 @@ export function parseTreeText(text: string): UIElement[] {
   if (!basis || basis.width <= 0 || basis.height <= 0) return []
 
   const elements: UIElement[] = []
+  // React Native nests text, so the same text often appears as two identical elements, one inside
+  // the other. Exact duplicates add nothing to a selector and double the output.
+  const seen = new Set<string>()
   for (const node of raw) {
     if (!node.frame || node.frame.width <= 0 || node.frame.height <= 0) continue
     const role = toRole(node.type)
@@ -155,6 +158,9 @@ export function parseTreeText(text: string): UIElement[] {
       },
       enabled: !node.flags.has('Disabled'),
     }
+    const key = `${role}|${label}|${node.identifier ?? ''}|${node.value ?? ''}|${element.frame.x}|${element.frame.y}|${element.frame.width}|${element.frame.height}`
+    if (seen.has(key)) continue
+    seen.add(key)
     if (node.identifier) element.identifier = node.identifier
     if (node.value !== undefined) element.value = node.value
     if (node.placeholder !== undefined) element.placeholder = node.placeholder

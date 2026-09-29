@@ -3,7 +3,7 @@ export type { SimulatorOptions, BootOptions, Orientation, SystemAlert } from './
 export { SimctlWrapper } from './SimctlWrapper.js'
 export { XCUITreeReader } from './XCUITreeReader.js'
 export { LeanStore } from './LeanStore.js'
-export { ScreenRecorder } from './Recorder.js'
+export { ScreenRecorder, redactUrl } from './Recorder.js'
 export type { Recording, RecordedAction, ActionInput } from './Recorder.js'
 export { exportVideo, timeline, markerFilters } from './video.js'
 export type { ExportOptions } from './video.js'

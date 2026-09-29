@@ -10,7 +10,7 @@ import { TouchHelper } from './TouchHelper.js'
 import { XCUITreeReader } from './XCUITreeReader.js'
 import { LeanStore } from './LeanStore.js'
 import { LEAN_LABELS } from './leanLabels.js'
-import { ScreenRecorder, type ActionInput, type Recording } from './Recorder.js'
+import { redactUrl, ScreenRecorder, type ActionInput, type Recording } from './Recorder.js'
 
 const logger = createLogger('ios-agent:simulator')
 
@@ -228,7 +228,7 @@ export class Simulator {
 
   async openUrl(url: string): Promise<void> {
     await this.simctl.openUrl(this.udid, url)
-    this.recorder.mark({ kind: 'openUrl', url })
+    this.recorder.mark({ kind: 'openUrl', url: redactUrl(url) })
   }
 
   screenshot(format: 'png' | 'jpeg' = 'png'): Promise<Buffer> {

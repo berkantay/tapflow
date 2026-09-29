@@ -45,7 +45,7 @@ async function saveRecording(sim: Simulator, dir: string, stem: string, width?: 
   fs.writeFileSync(timelinePath, timeline(rec.actions, { stepsOnly: true }) + '\n')
   console.log(`  video: ${rec.path} (${(rec.bytes / 1e6).toFixed(1)} MB)`)
   try {
-    const web = await exportVideo(rec.path, path.join(dir, `${stem}.web.mp4`), rec.actions, { width })
+    const web = await exportVideo(rec.path, path.join(dir, `${stem}.web.mp4`), rec.actions, { width, durationMs: rec.durationMs })
     console.log(`  shareable: ${web.path} (${(web.bytes / 1e6).toFixed(1)} MB)`)
   } catch (e) {
     console.error(`  could not export a shareable video: ${(e as Error).message}`)

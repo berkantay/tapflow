@@ -99,3 +99,17 @@ describe('parseTreeText fields and flags (captured from Safari, iOS 26)', () => 
   })
 })
 
+describe('parseTreeText duplicates', () => {
+  it('drops an element identical to one already listed (React Native nests text)', () => {
+    const els = parseTreeText([
+      'Element subtree:',
+      " →Application, 0x1, pid: 1, label: 'App'",
+      '    Window (Main), 0x2, {{0.0, 0.0}, {402.0, 874.0}}',
+      "      StaticText, 0x3, {{20.0, 100.0}, {200.0, 20.0}}, label: 'Nothing to do'",
+      "        StaticText, 0x4, {{20.0, 100.0}, {200.0, 20.0}}, label: 'Nothing to do'",
+      "      StaticText, 0x5, {{20.0, 140.0}, {200.0, 20.0}}, label: 'Nothing to do'",
+    ].join('\n'))
+    expect(els.filter((e) => e.label === 'Nothing to do')).toHaveLength(2)
+  })
+})
+

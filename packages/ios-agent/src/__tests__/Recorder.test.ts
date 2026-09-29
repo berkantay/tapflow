@@ -69,3 +69,13 @@ describe('ScreenRecorder', () => {
     await expect(new ScreenRecorder('U', () => fakeProc()).stop()).rejects.toThrow(/not recording/)
   })
 })
+
+describe('redactUrl', () => {
+  it('hides credential-like query values and keeps the rest', async () => {
+    const { redactUrl } = await import('../Recorder')
+    expect(redactUrl('example-dev://?tk=abc123')).toBe('example-dev://?tk=…')
+    expect(redactUrl('app://login?user=ada&access_token=xyz&next=/home')).toBe('app://login?user=ada&access_token=…&next=/home')
+    expect(redactUrl('https://x.test/cb?code=42#session=s')).toBe('https://x.test/cb?code=…#session=…')
+    expect(redactUrl('app://open?url=http%3A%2F%2Flocalhost%3A8125')).toBe('app://open?url=http%3A%2F%2Flocalhost%3A8125')
+  })
+})
