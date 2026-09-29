@@ -40,6 +40,13 @@ export interface UIElement {
   identifier?: string
   frame: UIElementFrame
   enabled: boolean
+  /** Current value: a text field's contents, a switch's state, a slider's position. */
+  value?: string
+  /** A text field's placeholder. */
+  placeholder?: string
+  /** Holds keyboard focus. */
+  focused?: boolean
+  selected?: boolean
   rawRole?: string
 }
 

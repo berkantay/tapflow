@@ -21,6 +21,8 @@ const TREE = [
   "      Button, 0x3, {{0.0, 0.0}, {50.0, 20.0}}, identifier: 'ok', label: 'OK'",
 ].join('\n')
 
+let nextPort = 30000
+
 function makeNative(overrides: Partial<RunnerNative> = {}): RunnerNative & {
   spawn: ReturnType<typeof vi.fn>
   terminateHost: ReturnType<typeof vi.fn>
@@ -32,6 +34,7 @@ function makeNative(overrides: Partial<RunnerNative> = {}): RunnerNative & {
     spawn: vi.fn(() => fakeProc()),
     terminateHost: vi.fn(),
     terminateRunner: vi.fn(async () => {}),
+    freePort: vi.fn(async () => nextPort++),
     ...overrides,
   } as RunnerNative & { spawn: ReturnType<typeof vi.fn>; terminateHost: ReturnType<typeof vi.fn>; build: ReturnType<typeof vi.fn> }
 }
@@ -94,7 +97,7 @@ describe('XCUITreeReader', () => {
     const native = makeNative()
     const reader = new XCUITreeReader(native)
     await reader.read('udid-A', 'com.app')
-    expect(native.terminateRunner).toHaveBeenCalledWith('udid-A', expect.any(Number))
+    expect(native.terminateRunner).toHaveBeenCalledWith('udid-A')
     reader.stop()
   })
 
@@ -117,6 +120,44 @@ describe('XCUITreeReader', () => {
     const native = makeNative()
     const reader = new XCUITreeReader(native)
     await expect(reader.key('udid-A', 'com.app', 'return')).rejects.toThrow(/keyboard focus/)
+    reader.stop()
+  })
+
+  it('runs one runner per device, each on its own port, at the same time', async () => {
+    const native = makeNative()
+    const reader = new XCUITreeReader(native)
+    await Promise.all([reader.read('udid-A', 'com.app'), reader.read('udid-B', 'com.app')])
+    expect(native.spawn).toHaveBeenCalledTimes(2)
+    const ports = native.spawn.mock.calls.map((c) => c[1])
+    expect(new Set(ports).size).toBe(2)
+    const treeUrls = fetchMock.mock.calls.map((c) => c[0] as string).filter((u) => u.includes('/tree'))
+    expect(treeUrls.some((u) => u.includes(`:${ports[0]}/`))).toBe(true)
+    expect(treeUrls.some((u) => u.includes(`:${ports[1]}/`))).toBe(true)
+    // A second read on either device reuses its runner.
+    await reader.read('udid-A', 'com.app')
+    expect(native.spawn).toHaveBeenCalledTimes(2)
+    reader.stop()
+  })
+
+  it('stopping one device leaves the other device\'s runner running', async () => {
+    const native = makeNative()
+    const reader = new XCUITreeReader(native)
+    await reader.read('udid-A', 'com.app')
+    await reader.read('udid-B', 'com.app')
+    reader.stopIfDevice('udid-A')
+    await reader.read('udid-B', 'com.app')
+    expect(native.spawn).toHaveBeenCalledTimes(2)
+    await reader.read('udid-A', 'com.app')
+    expect(native.spawn).toHaveBeenCalledTimes(3)
+    reader.stop()
+  })
+
+  it('gives each run its own result bundle', async () => {
+    const native = makeNative()
+    const reader = new XCUITreeReader(native)
+    await Promise.all([reader.read('udid-A', 'com.app'), reader.read('udid-B', 'com.app')])
+    const bundles = native.spawn.mock.calls.map((c) => c[2] as string)
+    expect(bundles[0]).not.toBe(bundles[1])
     reader.stop()
   })
 })

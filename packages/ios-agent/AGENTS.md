@@ -27,8 +27,13 @@ Measured on Xcode 27 / iOS 26.0 while building this, and worth keeping in mind:
 - **A runner left behind by another process** still answers `/health` on the shared port, so a new
   runner's readiness check would pass against it and then lose it. `XCUITreeReader` terminates any
   runner on the device and waits for the port before starting its own.
-- **The tree runner port is fixed (22087)**, so one simulator per Mac can have a live tree at a time.
-  Passing `TEST_RUNNER_TAPFLOW_TREE_PORT` to xcodebuild is the known way to lift that.
+- **One tree runner per simulator, each on its own free port**, so several simulators (in one
+  process or several) can be driven at once. xcodebuild passes the test process only variables
+  prefixed `TEST_RUNNER_`, with the prefix stripped; that is how `TAPFLOW_TREE_PORT` reaches it.
+  Each run gets its own `-resultBundlePath`, so two runners started together do not collide.
+- **Tree lines are `, key: value` fields then flags** (`identifier`, `label`, `placeholderValue`,
+  `value`, then `Selected`, `Keyboard Focused`, `Disabled`). The parser scans them in order; a
+  label used to swallow a following `placeholderValue`, and an identifier followed by a flag was lost.
 
 After changing `xctest-runner/TreeRunner/*.swift`, delete `xctest-runner/build/` so the runner is
 rebuilt on first use; `XCUITreeReader` only checks that a build exists.
@@ -157,7 +162,7 @@ The iOS UI tree comes from a resident **XCUITest runner** that runs *inside* the
 - Source: `xctest-runner/` — xcodegen `project.yml` → **committed `.xcodeproj`** (no xcodegen at runtime).
   - `TreeHost` — minimal host app the UI-test target attaches to.
   - `TreeRunner` — the UI-test target: `TreeServer.swift` opens an `NWListener` HTTP server; `TreeServerTest.swift` starts it and blocks so the process stays resident.
-- Protocol: `GET /health` → `ok` (readiness); `GET /tree?bundleId=<id>` → the app's `XCUIApplication.debugDescription` (text); `GET /type?bundleId=<id>&text=<t>` and `GET /key?bundleId=<id>&name=<k>` type into the focused element (409 when nothing has focus). Port via `TAPFLOW_TREE_PORT` env (default `22087`). The simulator shares `localhost` with the host (WDA pattern), so the host reaches the in-simulator server directly.
+- Protocol: `GET /health` → `ok` (readiness); `GET /tree?bundleId=<id>` → the app's `XCUIApplication.debugDescription` (text); `GET /type?bundleId=<id>&text=<t>` and `GET /key?bundleId=<id>&name=<k>` type into the focused element (409 when nothing has focus). Port via `TAPFLOW_TREE_PORT` (passed as `TEST_RUNNER_TAPFLOW_TREE_PORT`; a free port per simulator). The simulator shares `localhost` with the host (WDA pattern), so the host reaches the in-simulator server directly.
 - `XCUITreeReader.ts` builds the runner once (`build-for-testing`, cached under `xctest-runner/build/`, gitignored), launches it (`test-without-building`, resident), polls `/health`, then fetches `/tree`. `xcuiTree.ts` parses the debugDescription text into the unified schema — kept a **pure function** so it stays unit-testable against the `xcuiTree.test.ts` fixture (Open Q9: a future Xcode format change fails there).
 - Queries by bundleId: the reader needs the foreground app's bundleId, tracked as `DeviceState.currentBundleId` on `app:launch`. `readUITree` throws an actionable `PlatformError` if no app has been launched — never a silent empty tree.
 - Frames: debugDescription frames are points; the parser normalizes them 0-1 against the `Window` frame (same coordinate space as the touch path).

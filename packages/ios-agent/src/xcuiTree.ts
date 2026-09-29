@@ -58,30 +58,57 @@ interface RawNode {
   frame?: { x: number; y: number; width: number; height: number }
   identifier?: string
   label?: string
+  placeholder?: string
+  value?: string
+  flags: Set<string>
 }
 
 const FRAME_RE = /\{\{(-?[\d.]+), (-?[\d.]+)\}, \{(-?[\d.]+), (-?[\d.]+)\}\}/
-// Terminate quoted fields on the next field boundary, so a quote inside the
-// value (e.g. label: 'Don't') does not truncate the match. The `, value: `
-// lookahead stays even though value isn't captured — a trailing value field is
-// still a valid label boundary.
-const IDENTIFIER_RE = /, identifier: '(.*?)'(?=, label: |, value: |$)/
-const LABEL_RE = /, label: '(.*?)'(?=, value: |$)/
+
+// After the frame come `, key: value` fields in a fixed order (identifier, label, placeholderValue,
+// value), then state flags such as `, Selected`, `, Keyboard Focused`, `, Disabled`. A field ends
+// only where the next field or flag begins, so a quote or comma inside a label (label: 'Don't')
+// does not end it early, and a following placeholderValue or flag is not swallowed into it.
+const FIELD_KEYS = 'identifier|label|placeholderValue|title|value'
+const BOUNDARY = `(?=, (?:${FIELD_KEYS}): |, [A-Z][A-Za-z ]*(?:,|$)|$)`
+const QUOTED_FIELD_RE = new RegExp(`^, (${FIELD_KEYS}): '(.*?)'${BOUNDARY}`)
+const BARE_FIELD_RE = new RegExp(`^, (${FIELD_KEYS}): (.*?)${BOUNDARY}`)
+const FLAG_RE = /^, ([A-Z][A-Za-z ]*)(?=,|$)/
 
 function parseLine(line: string): RawNode | null {
   // Strip indentation + the root arrow, then take the type up to ", 0x<addr>".
   const m = /^\s*→?\s*(.+?), 0x[0-9a-fA-F]+/.exec(line)
   if (!m) return null
-  const node: RawNode = { type: m[1] }
+  const node: RawNode = { type: m[1], flags: new Set() }
 
-  const fm = FRAME_RE.exec(line)
+  let rest = line.slice(m[0].length)
+  const fm = FRAME_RE.exec(rest)
   if (fm) {
     node.frame = { x: parseFloat(fm[1]), y: parseFloat(fm[2]), width: parseFloat(fm[3]), height: parseFloat(fm[4]) }
+    rest = rest.slice(fm.index + fm[0].length)
   }
-  const im = IDENTIFIER_RE.exec(line)
-  if (im) node.identifier = im[1]
-  const lm = LABEL_RE.exec(line)
-  if (lm) node.label = lm[1]
+  // Anything between the address and the first field (a pid, say) is not a field.
+  const first = rest.search(new RegExp(`, (?:${FIELD_KEYS}): |, [A-Z]`))
+  rest = first >= 0 ? rest.slice(first) : ''
+  while (rest.length > 0) {
+    const field = QUOTED_FIELD_RE.exec(rest) ?? BARE_FIELD_RE.exec(rest)
+    if (field) {
+      const [whole, key, value] = field
+      if (key === 'identifier') node.identifier = value
+      else if (key === 'label') node.label = value
+      else if (key === 'placeholderValue') node.placeholder = value
+      else if (key === 'value') node.value = value
+      rest = rest.slice(whole.length)
+      continue
+    }
+    const flag = FLAG_RE.exec(rest)
+    if (flag) {
+      node.flags.add(flag[1])
+      rest = rest.slice(flag[0].length)
+      continue
+    }
+    break
+  }
   return node
 }
 
@@ -126,9 +153,13 @@ export function parseTreeText(text: string): UIElement[] {
         width: round4(node.frame.width / basis.width),
         height: round4(node.frame.height / basis.height),
       },
-      enabled: true, // debugDescription does not expose enabled; default true (Open Q9)
+      enabled: !node.flags.has('Disabled'),
     }
     if (node.identifier) element.identifier = node.identifier
+    if (node.value !== undefined) element.value = node.value
+    if (node.placeholder !== undefined) element.placeholder = node.placeholder
+    if (node.flags.has('Keyboard Focused')) element.focused = true
+    if (node.flags.has('Selected')) element.selected = true
     element.rawRole = node.type
     elements.push(element)
   }

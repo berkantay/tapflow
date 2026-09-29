@@ -69,3 +69,33 @@ describe('parseTreeText field-boundary edge cases', () => {
     expect(parseTreeText('Element subtree:\n →Application, 0x1, pid: 1, label: \'App\'')).toEqual([])
   })
 })
+
+describe('parseTreeText fields and flags (captured from Safari, iOS 26)', () => {
+  const tree = (...lines: string[]) => parseTreeText([
+    'Element subtree:',
+    " →Application, 0x1, pid: 1, label: 'Safari'",
+    '    Window (Main), 0x2, {{0.0, 0.0}, {402.0, 874.0}}',
+    ...lines,
+  ].join('\n'))
+
+  it('stops a label at placeholderValue and reads value and focus', () => {
+    const [field] = tree("      TextField, 0x3, {{20.0, 538.0}, {292.0, 48.0}}, identifier: 'URL', label: 'Address', placeholderValue: 'Search or enter website name', value: second phone, Keyboard Focused")
+    expect(field).toMatchObject({ role: 'input', identifier: 'URL', label: 'Address', placeholder: 'Search or enter website name', value: 'second phone', focused: true })
+  })
+
+  it('keeps an identifier that is followed by a flag', () => {
+    const [cell] = tree("      Cell, 0x4, {{16.0, 96.0}, {388.0, 52.0}}, identifier: 'SearchSuggestion?destination=Search', Selected")
+    expect(cell).toMatchObject({ role: 'cell', identifier: 'SearchSuggestion?destination=Search', selected: true })
+  })
+
+  it('reads Disabled into enabled', () => {
+    const [button] = tree("      Button, 0x5, {{0.0, 0.0}, {50.0, 20.0}}, label: 'Send', Disabled")
+    expect(button).toMatchObject({ label: 'Send', enabled: false })
+  })
+
+  it('keeps quotes and commas inside a label', () => {
+    const [text] = tree("      StaticText, 0x6, {{0.0, 0.0}, {50.0, 20.0}}, label: 'Don't, stop: here'")
+    expect(text.label).toBe("Don't, stop: here")
+  })
+})
+

@@ -1,6 +1,8 @@
 import { spawn, execFile, type ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { readdirSync } from 'fs'
+import { readdirSync, rmSync } from 'fs'
+import { createServer } from 'net'
+import { tmpdir } from 'os'
 import { join } from 'path'
 import type { UIElement } from '@tapflowio/agent-core'
 import { createLogger, PlatformError } from '@tapflowio/agent-core'
@@ -19,28 +21,32 @@ const SCHEME = 'TreeRunner'
 // alone does not tear the in-simulator process down).
 const RUNNER_HOST_BUNDLE = 'dev.tapflow.treerunner.host'
 const RUNNER_TEST_BUNDLE = 'dev.tapflow.treerunner.uitests.xctrunner'
-const STALE_RUNNER_GONE_MS = 10_000
-// Fixed port: xcodebuild does not propagate host env to the in-simulator test
-// runner, so a per-udid port can't be passed this way. A single resident runner
-// (guarded below) means no collision; concurrent multi-device is deferred (Q8).
-const PORT = 22087
 
+// One runner per simulator, each on its own port. The simulator shares the host's network stack, so
+// a port free on the host is free for the runner. xcodebuild hands the test process only variables
+// prefixed `TEST_RUNNER_` (with the prefix stripped), which is how the port reaches it.
 interface RunnerHandle {
   proc: ChildProcess
   udid: string
   port: number
+  resultBundle: string
 }
+
+// Shared by every reader in the process: two simulators asking at once must not build twice into
+// the same derived-data directory.
+let sharedBuild: Promise<void> | undefined
 
 // Native-tooling boundary (xcodebuild/xcrun). Injectable so tests can mock the
 // native calls without exercising the runner lifecycle / signal handling.
 export interface RunnerNative {
   xctestrunReady(): boolean
   build(destination: string): Promise<void>
-  spawn(destination: string, port: number): ChildProcess
+  spawn(destination: string, port: number, resultBundle: string): ChildProcess
   terminateHost(udid: string): void
-  /** Terminate any runner already on the device, including one left behind by another process,
-   *  and wait until `port` is free. */
-  terminateRunner(udid: string, port: number): Promise<void>
+  /** Terminate any runner already on the device, including one left behind by another process. */
+  terminateRunner(udid: string): Promise<void>
+  /** A TCP port nothing on this host is listening on. */
+  freePort(): Promise<number>
 }
 
 const defaultNative: RunnerNative = {
@@ -59,30 +65,32 @@ const defaultNative: RunnerNative = {
       { timeout: 300_000, maxBuffer: 64 * 1024 * 1024 },
     )
   },
-  spawn(destination, port) {
+  spawn(destination, port, resultBundle) {
+    // Its own result bundle per run: two runners started in the same second would otherwise collide
+    // on the timestamped default under the shared derived-data directory.
     return spawn(
       'xcodebuild',
-      ['test-without-building', '-project', PROJECT, '-scheme', SCHEME, '-destination', destination, '-derivedDataPath', BUILD_DIR, '-quiet'],
-      { env: { ...process.env, TAPFLOW_TREE_PORT: String(port) }, stdio: 'ignore', detached: true },
+      ['test-without-building', '-project', PROJECT, '-scheme', SCHEME, '-destination', destination, '-derivedDataPath', BUILD_DIR, '-resultBundlePath', resultBundle, '-quiet'],
+      { env: { ...process.env, TEST_RUNNER_TAPFLOW_TREE_PORT: String(port) }, stdio: 'ignore', detached: true },
     )
   },
   terminateHost(udid) {
     execFile('xcrun', ['simctl', 'terminate', udid, RUNNER_HOST_BUNDLE], () => { /* best-effort */ })
   },
-  async terminateRunner(udid, port) {
+  async terminateRunner(udid) {
     for (const bundle of [RUNNER_TEST_BUNDLE, RUNNER_HOST_BUNDLE]) {
       await execFileAsync('xcrun', ['simctl', 'terminate', udid, bundle]).catch(() => { /* not running */ })
     }
-    const deadline = Date.now() + STALE_RUNNER_GONE_MS
-    while (Date.now() < deadline) {
-      try {
-        await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(500) })
-      } catch {
-        return
-      }
-      await new Promise((r) => setTimeout(r, 250))
-    }
-    throw new PlatformError(`port ${port} is still held by another UI-tree runner; is another tapflow process driving a simulator?`)
+  },
+  freePort() {
+    return new Promise((resolve, reject) => {
+      const srv = createServer()
+      srv.once('error', reject)
+      srv.listen(0, '127.0.0.1', () => {
+        const address = srv.address()
+        srv.close(() => (typeof address === 'object' && address ? resolve(address.port) : reject(new Error('no port'))))
+      })
+    })
   },
 }
 
@@ -90,9 +98,8 @@ const defaultNative: RunnerNative = {
 // resident), and queries GET /tree over the simulator-shared loopback. Replaces
 // the AXUIElement path (UITreeReader), which required a Simulator.app window.
 export class XCUITreeReader {
-  private runner?: RunnerHandle
-  private building?: Promise<void>
-  private starting?: Promise<RunnerHandle>
+  private readonly runners = new Map<string, RunnerHandle>()
+  private readonly starting = new Map<string, Promise<RunnerHandle>>()
 
   constructor(private readonly native: RunnerNative = defaultNative) {}
 
@@ -103,20 +110,17 @@ export class XCUITreeReader {
 
   private async ensureBuilt(udid: string): Promise<void> {
     if (this.native.xctestrunReady()) return
-    if (this.building) return this.building
-    this.building = (async () => {
+    sharedBuild ??= (async () => {
       logger.info('building tree runner (first run — cached afterwards)...')
       await this.native.build(this.destination(udid))
       logger.info('tree runner built')
-    })()
+    })().finally(() => { sharedBuild = undefined })
     try {
-      await this.building
+      await sharedBuild
     } catch (e) {
       throw new PlatformError(
         `failed to build the UI-tree runner — ensure Xcode and an iOS simulator runtime are installed (xcode-select -p): ${(e as Error).message.slice(0, 300)}`,
       )
-    } finally {
-      this.building = undefined
     }
   }
 
@@ -125,40 +129,45 @@ export class XCUITreeReader {
   }
 
   private async ensureRunner(udid: string): Promise<RunnerHandle> {
-    if (this.runnerAlive(this.runner) && this.runner.udid === udid) return this.runner
-    // Serialize concurrent callers so we never double-spawn or hand back an
-    // un-ready runner (a second caller must await waitReady, not just the object).
-    if (this.starting) {
-      const h = await this.starting.catch(() => undefined)
-      if (h && this.runnerAlive(h) && h.udid === udid) return h
+    const current = this.runners.get(udid)
+    if (this.runnerAlive(current)) return current
+    // Serialize concurrent callers for one device so it never gets two runners, and a second caller
+    // waits for readiness rather than taking the handle early. Other devices are not held up.
+    const pending = this.starting.get(udid)
+    if (pending) {
+      const h = await pending.catch(() => undefined)
+      if (this.runnerAlive(h)) return h
     }
-    this.starting = this.launchRunner(udid)
+    const launch = this.launchRunner(udid)
+    this.starting.set(udid, launch)
     try {
-      return await this.starting
+      return await launch
     } finally {
-      this.starting = undefined
+      if (this.starting.get(udid) === launch) this.starting.delete(udid)
     }
   }
 
   private async launchRunner(udid: string): Promise<RunnerHandle> {
-    this.stop() // tear down any stale/other-udid runner first
-    // A runner another process left behind still answers /health on the shared port, so the new
-    // one's readiness poll would pass against it and then lose it when the new test session takes
-    // the device over (measured: "fetch failed" on the first read). Clear it and wait for the port.
-    await this.native.terminateRunner(udid, PORT)
+    this.stopIfDevice(udid)
+    // A runner another process left on this device would lose the device to the new test session
+    // mid-request; clear it first. Its port is not ours, so it does not block the new one.
+    await this.native.terminateRunner(udid)
     await this.ensureBuilt(udid)
-    const proc = this.native.spawn(this.destination(udid), PORT)
+    const port = await this.native.freePort()
+    const resultBundle = join(tmpdir(), `tapflow-tree-${udid}-${Date.now()}.xcresult`)
+    const proc = this.native.spawn(this.destination(udid), port, resultBundle)
     proc.on('error', (e) => logger.error('tree runner process error:', e.message))
-    const handle: RunnerHandle = { proc, udid, port: PORT }
-    this.runner = handle
+    const handle: RunnerHandle = { proc, udid, port, resultBundle }
+    this.runners.set(udid, handle)
     await this.waitReady(handle)
     return handle
   }
 
   private async waitReady(handle: RunnerHandle): Promise<void> {
+    const { udid } = handle
     for (let i = 0; i < 90; i++) {
       if (!this.runnerAlive(handle)) {
-        if (this.runner === handle) this.runner = undefined
+        if (this.runners.get(udid) === handle) this.runners.delete(udid)
         throw new PlatformError('tree runner exited before becoming ready — check Xcode/simulator state')
       }
       try {
@@ -169,7 +178,7 @@ export class XCUITreeReader {
       }
       await new Promise((r) => setTimeout(r, 1000))
     }
-    this.stop()
+    this.stopIfDevice(handle.udid)
     throw new PlatformError('tree runner did not become ready in time')
   }
 
@@ -214,22 +223,21 @@ export class XCUITreeReader {
     if (!r.ok) throw new PlatformError(`${what} failed: ${(await r.text()).trim() || `HTTP ${r.status}`}`)
   }
 
-  // Stop the resident runner regardless of which device it serves.
+  /** Stop every runner this reader started. */
   stop(): void {
-    const handle = this.runner
+    for (const udid of [...this.runners.keys()]) this.stopIfDevice(udid)
+  }
+
+  /** Stop this device's runner only; other devices keep theirs. */
+  stopIfDevice(udid: string): void {
+    const handle = this.runners.get(udid)
     if (!handle) return
-    this.runner = undefined
+    this.runners.delete(udid)
     this.killHandle(handle)
   }
 
-  // Stop only if the runner currently serves this device — so shutting down one
-  // booted device does not kill another device's runner.
-  stopIfDevice(udid: string): void {
-    if (this.runner?.udid === udid) this.stop()
-  }
-
   private killHandle(handle: RunnerHandle): void {
-    const { proc, udid } = handle
+    const { proc, udid, resultBundle } = handle
     const pid = proc.pid
     // detached spawn → the child leads its own group; kill the whole group.
     try {
@@ -248,6 +256,7 @@ export class XCUITreeReader {
       } catch {
         /* gone */
       }
+      rmSync(resultBundle, { recursive: true, force: true })
     }, 3000)
     timer.unref?.()
   }
