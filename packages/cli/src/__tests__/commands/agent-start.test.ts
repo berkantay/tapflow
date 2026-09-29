@@ -3,7 +3,6 @@ import type { AgentConnectOpts } from '@tapflowio/agent-core'
 
 vi.mock('node:child_process')
 vi.mock('@tapflowio/ios-agent', () => ({ requestAudioPermission: vi.fn(), isAudioSupported: vi.fn(() => true) }))
-vi.mock('@tapflowio/android-agent', () => ({}))
 // The singleton claim is a real socket held for the life of the process, so one claim inside a vitest
 // worker would refuse every later test in the file. These tests are about connecting and about the
 // token; `agentSingleton.test.ts` is what exercises the claim itself, against a real temp directory.

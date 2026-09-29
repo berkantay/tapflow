@@ -56,7 +56,6 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "@tapflowio/agent-core": "workspace:*",
-    "@tapflowio/android-agent": "workspace:*",
     "@tapflowio/flow-runner": "workspace:*",
     "@tapflowio/ios-agent": "workspace:*",
     "@tapflowio/relay": "workspace:*",

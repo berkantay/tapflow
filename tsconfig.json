@@ -20,9 +20,6 @@
       "path": "packages/ios-agent"
     },
     {
-      "path": "packages/android-agent"
-    },
-    {
       "path": "packages/cli"
     }
   ]

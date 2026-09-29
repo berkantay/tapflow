@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { AgentRegistry } from '@tapflowio/agent-core'
 import { config, assertInstallDir } from '@tapflowio/relay'
 import { requestAudioPermission, isAudioSupported } from '@tapflowio/ios-agent'
-import '@tapflowio/android-agent'
 import { banner, createSpinner } from '../lib/print.js'
 import { claimAgentSlot, claimPath } from '../lib/agent-singleton.js'
 
