@@ -18,6 +18,8 @@ const SCHEME = 'TreeRunner'
 // the test session so the HTTP port is released (killing the xcodebuild wrapper
 // alone does not tear the in-simulator process down).
 const RUNNER_HOST_BUNDLE = 'dev.tapflow.treerunner.host'
+const RUNNER_TEST_BUNDLE = 'dev.tapflow.treerunner.uitests.xctrunner'
+const STALE_RUNNER_GONE_MS = 10_000
 // Fixed port: xcodebuild does not propagate host env to the in-simulator test
 // runner, so a per-udid port can't be passed this way. A single resident runner
 // (guarded below) means no collision; concurrent multi-device is deferred (Q8).
@@ -36,6 +38,9 @@ export interface RunnerNative {
   build(destination: string): Promise<void>
   spawn(destination: string, port: number): ChildProcess
   terminateHost(udid: string): void
+  /** Terminate any runner already on the device, including one left behind by another process,
+   *  and wait until `port` is free. */
+  terminateRunner(udid: string, port: number): Promise<void>
 }
 
 const defaultNative: RunnerNative = {
@@ -63,6 +68,21 @@ const defaultNative: RunnerNative = {
   },
   terminateHost(udid) {
     execFile('xcrun', ['simctl', 'terminate', udid, RUNNER_HOST_BUNDLE], () => { /* best-effort */ })
+  },
+  async terminateRunner(udid, port) {
+    for (const bundle of [RUNNER_TEST_BUNDLE, RUNNER_HOST_BUNDLE]) {
+      await execFileAsync('xcrun', ['simctl', 'terminate', udid, bundle]).catch(() => { /* not running */ })
+    }
+    const deadline = Date.now() + STALE_RUNNER_GONE_MS
+    while (Date.now() < deadline) {
+      try {
+        await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(500) })
+      } catch {
+        return
+      }
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    throw new PlatformError(`port ${port} is still held by another UI-tree runner; is another tapflow process driving a simulator?`)
   },
 }
 
@@ -122,6 +142,10 @@ export class XCUITreeReader {
 
   private async launchRunner(udid: string): Promise<RunnerHandle> {
     this.stop() // tear down any stale/other-udid runner first
+    // A runner another process left behind still answers /health on the shared port, so the new
+    // one's readiness poll would pass against it and then lose it when the new test session takes
+    // the device over (measured: "fetch failed" on the first read). Clear it and wait for the port.
+    await this.native.terminateRunner(udid, PORT)
     await this.ensureBuilt(udid)
     const proc = this.native.spawn(this.destination(udid), PORT)
     proc.on('error', (e) => logger.error('tree runner process error:', e.message))
@@ -167,6 +191,27 @@ export class XCUITreeReader {
       throw new PlatformError(`tree runner returned an unexpected response for ${bundleId} — is the app running in the foreground?`)
     }
     return parseTreeText(text)
+  }
+
+  /** Type into the app's focused element through XCUITest, which handles any Unicode text. */
+  async type(udid: string, bundleId: string, text: string): Promise<void> {
+    await this.command(udid, `/type?bundleId=${encodeURIComponent(bundleId)}&text=${encodeURIComponent(text)}`, 'type text')
+  }
+
+  /** Press a named key (return, delete, tab, escape, space) in the app's focused element. */
+  async key(udid: string, bundleId: string, name: string): Promise<void> {
+    await this.command(udid, `/key?bundleId=${encodeURIComponent(bundleId)}&name=${encodeURIComponent(name)}`, `key ${name}`)
+  }
+
+  private async command(udid: string, route: string, what: string): Promise<void> {
+    const { port } = await this.ensureRunner(udid)
+    let r: Response
+    try {
+      r = await fetch(`http://localhost:${port}${route}`, { signal: AbortSignal.timeout(60_000) })
+    } catch (e) {
+      throw new PlatformError(`${what} failed: ${(e as Error).message}`)
+    }
+    if (!r.ok) throw new PlatformError(`${what} failed: ${(await r.text()).trim() || `HTTP ${r.status}`}`)
   }
 
   // Stop the resident runner regardless of which device it serves.

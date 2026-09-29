@@ -11,10 +11,9 @@ export class TransientQueryError extends Error {
   }
 }
 
-// A step failure whose cause is the environment rather than the product under test: relay, agent
-// or session level (a refused input with an environmental reason, a session lost to an agent restart,
-// a dropped relay connection). The engine marks the flow result with it so the CLI can exit 2;
-// anything else stays a product failure (exit 1). A PlatformError subclass, not a bare Error, so
+// A step failure whose cause is the environment rather than the product under test: the simulator,
+// its input channel, or the UI-tree runner. The engine marks the flow result with it so the CLI can
+// exit 2; anything else stays a product failure (exit 1). A PlatformError subclass, not a bare Error, so
 // consumers catching PlatformError around driver calls keep seeing the environmental path too.
 // Carries the original error as `cause` so no diagnosis is lost in the retype. Messages are preserved
 // verbatim.
@@ -28,7 +27,7 @@ export class EnvironmentStepError extends PlatformError {
 const markedEnvironmentFailures = new WeakSet<object>()
 
 // Keep the original error object for callers that already narrow on a public error class, while
-// giving the engine an explicit classification for relay-driver failures.
+// giving the engine an explicit classification for driver failures.
 export function markEnvironmentFailure<T extends Error>(error: T): T {
   markedEnvironmentFailures.add(error)
   return error

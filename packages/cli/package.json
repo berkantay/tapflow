@@ -1,16 +1,13 @@
 {
   "name": "tapflow",
   "version": "0.26.1",
-  "description": "Self-hosted iOS/Android simulator streaming for the whole team",
+  "description": "Drive iOS simulators from the command line: devices, flows, and an MCP server for agents",
   "keywords": [
     "ios",
-    "android",
     "simulator",
-    "emulator",
-    "qa",
-    "testing",
-    "streaming",
-    "self-hosted"
+    "mcp",
+    "automation",
+    "qa"
   ],
   "homepage": "https://github.com/jo-duchan/tapflow",
   "bugs": "https://github.com/jo-duchan/tapflow/issues",
@@ -48,20 +45,15 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b && tsc -p src/__tests__/tsconfig.json",
-    "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "lint": "eslint src",
-    "postinstall": "node bin/postinstall.js"
+    "lint": "eslint src"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.1",
     "@tapflowio/agent-core": "workspace:*",
     "@tapflowio/flow-runner": "workspace:*",
     "@tapflowio/ios-agent": "workspace:*",
-    "@tapflowio/relay": "workspace:*",
-    "cac": "^6.7.14",
-    "ws": "^8.21.3",
-    "zod": "^4.6.5"
+    "@tapflowio/mcp-server": "workspace:*",
+    "cac": "^6.7.14"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

@@ -10,4 +10,3 @@ export class ValidationError extends TapflowError {}
 
 export class PlatformError extends TapflowError {}
 
-export class AuthError extends TapflowError {}

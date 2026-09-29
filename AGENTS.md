@@ -5,7 +5,7 @@ through their UI tree and touch input, replay deterministic flows, and record wh
 
 ## Scope
 
-- **iOS Simulator only.** Android, the browser dashboard, and audio capture were removed.
+- **iOS Simulator only.** Android, the dashboard, the relay, streaming, audio and network control were removed.
 - **Agent-first.** An LLM agent (via the MCP server) or a flow file (via the CLI) drives the device.
 - **Recordings are an output.** A run should be able to leave a video behind for review.
 
@@ -13,16 +13,14 @@ through their UI tree and touch input, replay deterministic flows, and record wh
 
 | Package | Role |
 |---|---|
-| `protocol` | Message types shared by the agent, relay, and clients |
-| `agent-core` | `DeviceAgent` interface, registry, logging |
-| `ios-agent` | Simulator control: touch injection, UI tree, simctl |
-| `relay` | WebSocket hub between the agent and clients |
-| `flow-runner` | Deterministic YAML flow engine |
-| `mcp-server` | MCP tools for LLM agents |
+| `ios-agent` | `Simulator`: boot, apps, touch, typing, buttons, screenshots, UI tree |
+| `flow-runner` | Deterministic YAML flow engine and `SimulatorDriver` |
+| `mcp-server` | MCP tools for LLM agents, stdio or HTTP |
 | `cli` | `tapflow` command |
+| `agent-core` | Shared types, errors, logging |
 
-Package-level notes live in each package's `AGENTS.md`; some still describe upstream features that
-were removed here.
+There is no relay: the MCP server and the flow runner drive `Simulator` in-process. Package-level
+notes live in each package's `AGENTS.md`.
 
 ## Rules
 

@@ -1,15 +1,14 @@
 {
   "name": "@tapflowio/ios-agent",
   "version": "0.26.1",
-  "description": "iOS simulator agent for tapflow — xcrun simctl control and screen streaming",
+  "description": "iOS simulator control for agents: touch input, UI tree, typing, screenshots",
   "keywords": [
-    "tapflow",
     "ios",
     "simulator",
     "xcrun",
     "simctl",
-    "streaming",
-    "qa"
+    "xcuitest",
+    "automation"
   ],
   "homepage": "https://github.com/jo-duchan/tapflow",
   "bugs": "https://github.com/jo-duchan/tapflow/issues",
@@ -57,21 +56,13 @@
     "build": "tsc -b",
     "typecheck": "tsc -b && tsc -p src/__tests__/tsconfig.json",
     "test": "vitest run",
-    "lint": "eslint src",
-    "build:nethook": "./build-nethook.sh",
-    "test:netfilter": "./ios-netfilter/run-tests.sh"
+    "lint": "eslint src"
   },
   "dependencies": {
-    "@tapflowio/agent-core": "workspace:*",
-    "@tapflowio/protocol": "workspace:*",
-    "@tapflowio/audiotap-helper": "workspace:*",
-    "ws": "^8.21.3"
+    "@tapflowio/agent-core": "workspace:*"
   },
   "devDependencies": {
-    "@tapflowio/relay": "workspace:*",
-    "@tapflowio/test-utils": "workspace:*",
     "@types/node": "^22.20.4",
-    "@types/ws": "^8.0.0",
     "typescript": "^5.0.0",
     "vitest": "^4.1.11"
   }

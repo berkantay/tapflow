@@ -31,6 +31,7 @@ function makeNative(overrides: Partial<RunnerNative> = {}): RunnerNative & {
     build: vi.fn(async () => {}),
     spawn: vi.fn(() => fakeProc()),
     terminateHost: vi.fn(),
+    terminateRunner: vi.fn(async () => {}),
     ...overrides,
   } as RunnerNative & { spawn: ReturnType<typeof vi.fn>; terminateHost: ReturnType<typeof vi.fn>; build: ReturnType<typeof vi.fn> }
 }
@@ -87,5 +88,35 @@ describe('XCUITreeReader', () => {
   it('throws without a bundleId', async () => {
     const reader = new XCUITreeReader(makeNative())
     await expect(reader.read('udid-A', '')).rejects.toThrow(/foreground app/)
+  })
+
+  it('clears a runner left on the device before starting its own', async () => {
+    const native = makeNative()
+    const reader = new XCUITreeReader(native)
+    await reader.read('udid-A', 'com.app')
+    expect(native.terminateRunner).toHaveBeenCalledWith('udid-A', expect.any(Number))
+    reader.stop()
+  })
+
+  it('types text through the runner, percent-encoding it', async () => {
+    const native = makeNative()
+    const reader = new XCUITreeReader(native)
+    await reader.type('udid-A', 'com.app', 'a&b ü')
+    const url = fetchMock.mock.calls.map((c) => c[0] as string).find((u) => u.includes('/type'))
+    expect(url).toContain('bundleId=com.app')
+    expect(url).toContain(`text=${encodeURIComponent('a&b ü')}`)
+    reader.stop()
+  })
+
+  it('reports the runner\'s error body when a command is refused', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/health')
+        ? ({ ok: true } as Response)
+        : ({ ok: false, status: 409, text: async () => 'no element has keyboard focus' } as Response),
+    )
+    const native = makeNative()
+    const reader = new XCUITreeReader(native)
+    await expect(reader.key('udid-A', 'com.app', 'return')).rejects.toThrow(/keyboard focus/)
+    reader.stop()
   })
 })

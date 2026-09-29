@@ -1,7 +1,6 @@
 // Type-checks this package's test tree, which the build tsconfig excludes.
 //
-// Tests must not reach `dist`, so they cannot simply join the build's `include` — the same shape as
-// `protocol/tsconfig.assertions.json`, and for the same reason. Wired into the package's `typecheck`
+// Tests must not reach `dist`, so they cannot simply join the build's `include`. Wired into the package's `typecheck`
 // script.
 //
 // This package's script is `tsc --noEmit`, which builds no project references, so running it alone

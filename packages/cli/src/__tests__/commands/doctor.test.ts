@@ -1,187 +1,52 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
+import { describe, it, expect } from 'vitest'
+import { runChecks, type DoctorDeps } from '../../commands/doctor'
 
-vi.mock('@tapflowio/relay', () => ({ config: { agent: { lean: true } } }))
-vi.mock('../../lib/doctor.js', () => ({
-  runDoctorChecks: vi.fn(),
-}))
+const outputs: Record<string, string> = {
+  'xcode-select -p': '/Applications/Xcode.app/Contents/Developer\n',
+  'xcodebuild -version': 'Xcode 27.0\nBuild version 27A266a\n',
+  'xcrun simctl list runtimes --json': JSON.stringify({ runtimes: [{ name: 'iOS 26.0', platform: 'iOS', isAvailable: true }] }),
+  'xcrun simctl list devices available --json': JSON.stringify({ devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-26-0': [{}, {}] } }),
+}
 
-import { runDoctorChecks } from '../../lib/doctor.js'
-import { cmdDoctor } from '../../commands/doctor.js'
+function deps(overrides: Partial<DoctorDeps> = {}, out = outputs): DoctorDeps {
+  return {
+    platform: 'darwin',
+    run: async (cmd, args) => {
+      const key = [cmd, ...args].join(' ')
+      if (!(key in out)) throw new Error(`command failed: ${key}`)
+      return out[key]
+    },
+    helpersDir: '/pkg/bin',
+    isExecutable: () => true,
+    ...overrides,
+  }
+}
 
-const mockRunDoctorChecks = vi.mocked(runDoctorChecks)
-
-describe('cmdDoctor', () => {
-  let logLines: string[]
-  let errLines: string[]
-  let exitSpy: MockInstance
-
-  beforeEach(() => {
-    vi.resetAllMocks()
-    logLines = []
-    errLines = []
-    vi.spyOn(console, 'log').mockImplementation((...args) => logLines.push(args.join(' ')))
-    vi.spyOn(console, 'warn').mockImplementation((...args) => errLines.push(args.join(' ')))
-    exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit') })
+describe('doctor', () => {
+  it('passes on a ready Mac', async () => {
+    const checks = await runChecks(deps())
+    expect(checks.every((c) => c.ok)).toBe(true)
+    expect(checks.find((c) => c.label === 'iOS simulators')?.detail).toBe('2 available')
   })
 
-  afterEach(() => vi.restoreAllMocks())
-
-  it('모든 체크 통과 시 "All checks passed" 출력', async () => {
-    mockRunDoctorChecks.mockResolvedValue({
-      common: [{ label: 'Node v22.0.0', ok: true }],
-      ios: [{ label: 'Xcode 15.0', ok: true }],
-      android: null,
-    })
-
-    await cmdDoctor()
-    expect(logLines.join('\n')).toContain('All checks passed')
+  it('stops early off macOS', async () => {
+    const checks = await runChecks(deps({ platform: 'linux' }))
+    expect(checks).toHaveLength(1)
+    expect(checks[0].ok).toBe(false)
   })
 
-  it('platform 인자를 runDoctorChecks에 전달', async () => {
-    mockRunDoctorChecks.mockResolvedValue({
-      common: [{ label: 'Node v22.0.0', ok: true }],
-      ios: null,
-      android: [{ label: 'adb found: /x', ok: true }],
-    })
-
-    await cmdDoctor({ platform: 'android' })
-    // `agent.lean` comes from this machine's config, which is what the agents it starts will read.
-    expect(mockRunDoctorChecks).toHaveBeenCalledWith('android', { lean: true })
+  it('flags an Xcode that is too old', async () => {
+    const checks = await runChecks(deps({}, { ...outputs, 'xcodebuild -version': 'Xcode 25.4\n' }))
+    expect(checks.find((c) => c.label === 'Xcode')?.ok).toBe(false)
   })
 
-  it('알 수 없는 platform이면 warn + exit(1), 진단 미실행', async () => {
-    await expect(cmdDoctor({ platform: 'windows' })).rejects.toThrow('process.exit')
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    expect(errLines.join('\n')).toMatch(/platform/i)
-    expect(mockRunDoctorChecks).not.toHaveBeenCalled()
+  it('suggests downloading a runtime when none is installed', async () => {
+    const checks = await runChecks(deps({}, { ...outputs, 'xcrun simctl list runtimes --json': JSON.stringify({ runtimes: [] }) }))
+    expect(checks.find((c) => c.label === 'iOS runtime')?.fix).toMatch(/downloadPlatform/)
   })
 
-  it('실패 체크 있으면 "Some checks failed" 출력 후 exit(1)', async () => {
-    mockRunDoctorChecks.mockResolvedValue({
-      common: [{ label: 'Node v20.0.0', ok: false, detail: 'Node ≥ 22 required.' }],
-      ios: null,
-      android: null,
-    })
-
-    await expect(cmdDoctor()).rejects.toThrow('process.exit')
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    expect(logLines.join('\n')).toContain('SOME CHECKS FAILED')
-  })
-
-  it('iOS 섹션 있으면 iOS 헤더 출력', async () => {
-    mockRunDoctorChecks.mockResolvedValue({
-      common: [{ label: 'Node v22.0.0', ok: true }],
-      ios: [
-        { label: 'Xcode 15.0', ok: true },
-        { label: 'xcrun simctl', ok: true },
-        { label: 'Simulator booted: iPhone 16 Pro', ok: true },
-      ],
-      android: null,
-    })
-
-    await cmdDoctor()
-    expect(logLines.join('\n')).toContain('iOS')
-  })
-
-  it('Android 섹션 있으면 Android 헤더 출력', async () => {
-    mockRunDoctorChecks.mockResolvedValue({
-      common: [{ label: 'Node v22.0.0', ok: true }],
-      ios: null,
-      android: [
-        { label: 'adb found: /usr/local/bin/adb', ok: true },
-        { label: 'AVD: Pixel_8', ok: true },
-      ],
-    })
-
-    await cmdDoctor()
-    expect(logLines.join('\n')).toContain('Android')
-  })
-
-  it('실패 체크의 detail 메시지 출력', async () => {
-    mockRunDoctorChecks.mockResolvedValue({
-      common: [{ label: 'Node v20.0.0', ok: false, detail: 'Node ≥ 22 required.' }],
-      ios: null,
-      android: null,
-    })
-
-    await expect(cmdDoctor()).rejects.toThrow('process.exit')
-    expect(logLines.join('\n')).toContain('Node ≥ 22 required.')
-  })
-
-  describe('--json', () => {
-    it('유효한 JSON + ok=true + {ok, common, ios, android} 형태', async () => {
-      mockRunDoctorChecks.mockResolvedValue({
-        common: [{ label: 'Node v22.0.0', ok: true }],
-        ios: [{ label: 'Xcode 15.0', ok: true }],
-        android: null,
-      })
-
-      await cmdDoctor({ json: true })
-      const parsed = JSON.parse(logLines.join('\n'))
-      expect(parsed).toMatchObject({ ok: true })
-      expect(parsed).toHaveProperty('common')
-      expect(parsed).toHaveProperty('ios')
-      expect(parsed).toHaveProperty('android')
-      expect(exitSpy).not.toHaveBeenCalled()
-    })
-
-    it('실패 체크 있으면 ok=false + exit(1)', async () => {
-      mockRunDoctorChecks.mockResolvedValue({
-        common: [{ label: 'Node v20.0.0', ok: false, detail: 'Node ≥ 22 required.' }],
-        ios: null,
-        android: null,
-      })
-
-      await expect(cmdDoctor({ json: true })).rejects.toThrow('process.exit')
-      const parsed = JSON.parse(logLines.join('\n'))
-      expect(parsed.ok).toBe(false)
-      expect(exitSpy).toHaveBeenCalledWith(1)
-    })
-
-    it('warn만 있으면 ok=true (warn은 실패 아님)', async () => {
-      mockRunDoctorChecks.mockResolvedValue({
-        common: [{ label: 'Node v22.0.0', ok: true }],
-        ios: [{ label: 'Simulator', ok: false, warn: true, detail: 'No simulator is running.' }],
-        android: null,
-      })
-
-      await cmdDoctor({ json: true })
-      const parsed = JSON.parse(logLines.join('\n'))
-      expect(parsed.ok).toBe(true)
-      expect(exitSpy).not.toHaveBeenCalled()
-    })
-
-    it('ANSI 색 코드 미포함', async () => {
-      mockRunDoctorChecks.mockResolvedValue({
-        common: [{ label: 'Node v22.0.0', ok: true }],
-        ios: null,
-        android: null,
-      })
-
-      await cmdDoctor({ json: true })
-      expect(logLines.join('\n')).not.toContain('[')
-    })
-
-    it('detail/warn 필드를 그대로 직렬화', async () => {
-      mockRunDoctorChecks.mockResolvedValue({
-        common: [{ label: 'Node v22.0.0', ok: true }],
-        ios: null,
-        android: [
-          {
-            label: 'adb (not in PATH)',
-            ok: false,
-            warn: true,
-            detail: 'adb found at /x/adb but not in PATH. Run: tapflow setup android',
-          },
-        ],
-      })
-
-      await cmdDoctor({ json: true })
-      const parsed = JSON.parse(logLines.join('\n'))
-      expect(parsed.android[0]).toMatchObject({
-        warn: true,
-        detail: expect.stringContaining('setup android'),
-      })
-    })
+  it('names helper binaries that are not executable', async () => {
+    const checks = await runChecks(deps({ isExecutable: (f) => !f.endsWith('touch-helper') }))
+    expect(checks.find((c) => c.label === 'helper binaries')?.detail).toMatch(/touch-helper/)
   })
 })

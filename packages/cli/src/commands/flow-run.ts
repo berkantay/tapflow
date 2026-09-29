@@ -1,32 +1,19 @@
 import fs from 'fs'
 import path from 'path'
-import {
-  parseFlow,
-  runFlow,
-  toJUnitXml,
-  RelayClient,
-  RelayDriver,
-  type Flow,
-  type FlowResult,
-  type DeviceInfo,
-} from '@tapflowio/flow-runner'
+import { parseFlow, runFlow, SimulatorDriver, toJUnitXml, type Flow, type FlowResult } from '@tapflowio/flow-runner'
+import { Simulator } from '@tapflowio/ios-agent'
 
 export interface FlowRunOptions {
-  relay?: string
-  token?: string
-  session?: string
   device?: string
-  build?: number
-  install?: boolean
+  app?: string
   junit?: string
   artifacts?: string
   timeout?: number
+  lean?: boolean
 }
 
-// Exit codes are part of the CI contract: 0 = all flows passed,
-// 1 = at least one flow failed, 2 = environment/config error.
-const EXIT_FLOW_FAILED = 1
-const EXIT_ENV_ERROR = 2
+export const EXIT_FLOW_FAILED = 1
+export const EXIT_ENV_ERROR = 2
 const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000
 
 class FlowRunEnvironmentError extends Error {}
@@ -35,59 +22,28 @@ function envFail(message: string): never {
   throw new FlowRunEnvironmentError(message)
 }
 
-async function resolveSession(client: RelayClient, opts: FlowRunOptions): Promise<{ sessionId: string; device: DeviceInfo }> {
-  const sessions = await client.listDevices()
-  const devices = sessions.flatMap((s) => s.devices)
-  if (devices.length === 0) envFail('no devices registered on the relay — is an agent running?')
-
-  let candidates = devices
-  if (opts.session) {
-    candidates = devices.filter((d) => d.sessionId === opts.session)
-    if (candidates.length === 0) envFail(`session ${opts.session} not found`)
-    if (candidates.length > 1) envFail(`session ${opts.session} matches multiple devices — narrow with --device <name>`)
-  } else if (opts.device) {
-    candidates = devices.filter((d) => d.name === opts.device)
-    if (candidates.length === 0) {
-      envFail(`device "${opts.device}" not found (available: ${devices.map((d) => d.name).join(', ')})`)
-    }
-    // The same device name can exist on two agents (two Macs) — never pick one silently.
-    if (candidates.length > 1) envFail(`multiple devices named "${opts.device}" — narrow with --session <id> (the MCP server's list_devices shows each device's session id)`)
-  } else {
-    const booted = devices.filter((d) => d.status === 'booted')
-    if (booted.length === 1) {
-      candidates = booted
-    } else {
-      envFail(
-        booted.length === 0
-          ? 'no booted device — pass --device <name> to boot one, or boot it in the dashboard'
-          : `multiple booted devices — pick one with --device <name> or --session <id> (booted: ${booted.map((d) => d.name).join(', ')})`,
-      )
-    }
-  }
-
-  const device = candidates[0]
-  if (device.busy) envFail(`device "${device.name}" is busy (another session is active)`)
-  return { sessionId: device.sessionId, device }
+async function pickDevice(device: string | undefined): Promise<string> {
+  if (device) return (await Simulator.find(device)).id
+  const booted = (await Simulator.list()).filter((d) => d.status === 'booted')
+  if (booted.length === 1) return booted[0].id
+  envFail(booted.length === 0
+    ? 'no simulator is booted; pass --device <name or UDID> to boot one'
+    : `several simulators are booted (${booted.map((d) => d.name).join(', ')}); pick one with --device`)
 }
 
-export async function cmdFlowRun(files: string[], opts: FlowRunOptions): Promise<void> {
-  let client: RelayClient | undefined
-  let exitCode = 0
-  let joinedSessionId: string | undefined
-  let sawProductFailure = false
+/**
+ * Replay flow files on one simulator. Exit code 1 means a flow failed on the product side (a
+ * selector or an assertion); 2 means the run could not be carried out (no device, a simulator
+ * fault), so a CI job can tell a broken build from a broken runner.
+ */
+export async function cmdFlowRun(files: string[], opts: FlowRunOptions): Promise<number> {
+  let sim: Simulator | undefined
   try {
-    if (files.length === 0) envFail('no flow files given — usage: tapflow flow run .tapflow/flows/*.yaml')
-    // NaN would disable every deadline check in the engine (Date.now() >= NaN is
-    // always false) and hang the run — reject bad numeric flags up front.
-    if (opts.build !== undefined && !Number.isInteger(opts.build)) envFail('--build must be an integer build id (see list_builds / the dashboard)')
+    if (files.length === 0) envFail('no flow files given; usage: tapflow flow run flows/*.yaml')
     if (opts.timeout !== undefined && !(Number.isFinite(opts.timeout) && opts.timeout > 0 && opts.timeout <= MAX_TIMEOUT_SECONDS)) {
       envFail(`--timeout must be a positive number of seconds no greater than ${MAX_TIMEOUT_SECONDS}`)
     }
-
-    // Parse everything up front: a schema error is a config problem (exit 2),
-    // not a test failure, and it should surface before touching any device.
-    const flows: Flow[] = []
-    for (const file of files) {
+    const flows: Flow[] = files.map((file) => {
       let text: string
       try {
         text = fs.readFileSync(file, 'utf-8')
@@ -95,54 +51,33 @@ export async function cmdFlowRun(files: string[], opts: FlowRunOptions): Promise
         envFail(`cannot read ${file}: ${(e as Error).message}`)
       }
       try {
-        flows.push(parseFlow(text, file))
+        return parseFlow(text, file)
       } catch (e) {
         envFail((e as Error).message)
       }
+    })
+
+    sim = new Simulator(await pickDevice(opts.device), { lean: opts.lean })
+    const device = await sim.boot()
+    console.log(`device: ${device.name} (${device.osVersion ?? '?'})`)
+    if (opts.app) {
+      console.log(`installing ${opts.app}...`)
+      await sim.install(opts.app)
     }
 
-    const relayUrl = opts.relay ?? 'ws://localhost:4000'
-    const token = opts.token ?? process.env.TAPFLOW_TOKEN ?? ''
-    client = new RelayClient(relayUrl, token)
-    try {
-      await client.connect()
-    } catch (e) {
-      envFail(`cannot connect to relay at ${relayUrl}: ${(e as Error).message}`)
-    }
-
-    const { sessionId, device } = await resolveSession(client, opts)
-    await client.joinSession(sessionId)
-    joinedSessionId = sessionId
-
-    // Always send device:boot — it is idempotent on a booted device and it is
-    // what initializes the agent's touch/stream state for this session (the
-    // dashboard does the same on join).
-    console.log(`preparing ${device.name}...`)
-    await client.bootDevice(sessionId, device.id)
-    if (opts.build !== undefined && opts.install !== false) {
-      console.log(`installing build ${opts.build}...`)
-      await client.installApp(sessionId, opts.build)
-    }
-
-    const driver = new RelayDriver(client, sessionId, opts.build)
     const engineOpts = opts.timeout !== undefined ? { defaultTimeoutMs: Math.round(opts.timeout * 1000) } : {}
     const results: FlowResult[] = []
-
-    for (const [flowIndex, flow] of flows.entries()) {
+    for (const [i, flow] of flows.entries()) {
       process.stdout.write(`▶ ${flow.name} `)
-      const result = await runFlow(flow, driver, engineOpts)
+      const result = await runFlow(flow, new SimulatorDriver(sim, flow.appId), engineOpts)
       results.push(result)
-      if (result.status === 'failed' && result.failureKind !== 'environment') sawProductFailure = true
       console.log(result.status === 'passed' ? `✓ (${(result.durationMs / 1000).toFixed(1)}s)` : '✗')
       if (result.status === 'failed') {
         console.error(`  ${result.failureMessage}`)
         if (result.failureScreenshot) {
-          // Runtime data belongs in the gitignored .tapflow/artifacts/, and the
-          // index prefix keeps same-named flows from different directories
-          // from overwriting each other's evidence.
           const dir = opts.artifacts ?? path.join('.tapflow', 'artifacts')
           fs.mkdirSync(dir, { recursive: true })
-          const shot = path.join(dir, `${String(flowIndex + 1).padStart(2, '0')}-${flow.name.replace(/[^\w.-]+/g, '_')}-failure.png`)
+          const shot = path.join(dir, `${String(i + 1).padStart(2, '0')}-${flow.name.replace(/[^\w.-]+/g, '_')}-failure.png`)
           fs.writeFileSync(shot, result.failureScreenshot)
           console.error(`  screenshot: ${shot}`)
         }
@@ -154,30 +89,14 @@ export async function cmdFlowRun(files: string[], opts: FlowRunOptions): Promise
       fs.writeFileSync(opts.junit, toJUnitXml(results))
       console.log(`JUnit report: ${opts.junit}`)
     }
-
     const failed = results.filter((r) => r.status === 'failed')
     console.log(`\n${results.length - failed.length}/${results.length} flows passed`)
-    // All failed flows environmental → exit 2 (infrastructure, not a regression). Any
-    // product failure keeps exit 1, so a real regression is never masked by a blip.
-    if (failed.length > 0) {
-      exitCode = failed.every((r) => (r.failureKind ?? 'product') === 'environment')
-        ? EXIT_ENV_ERROR
-        : EXIT_FLOW_FAILED
-    }
-
+    if (failed.length === 0) return 0
+    return failed.every((r) => r.failureKind === 'environment') ? EXIT_ENV_ERROR : EXIT_FLOW_FAILED
   } catch (e) {
-    console.error(`✗ ${(e as Error).message}`)
-    if (exitCode === 0) exitCode = sawProductFailure ? EXIT_FLOW_FAILED : EXIT_ENV_ERROR
+    console.error(`error: ${(e as Error).message}`)
+    return EXIT_ENV_ERROR
   } finally {
-    if (client && joinedSessionId !== undefined) {
-      try {
-        client.leaveSession(joinedSessionId)
-      } catch (e) {
-        console.error(`✗ could not leave session cleanly: ${(e as Error).message}`)
-        if (exitCode === 0) exitCode = sawProductFailure ? EXIT_FLOW_FAILED : EXIT_ENV_ERROR
-      }
-    }
-    client?.disconnect()
+    sim?.close()
   }
-  process.exitCode = exitCode
 }

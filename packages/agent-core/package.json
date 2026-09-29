@@ -1,14 +1,11 @@
 {
   "name": "@tapflowio/agent-core",
   "version": "0.26.1",
-  "description": "DeviceAgent interface, AgentRegistry, and shared utilities for tapflow agents",
+  "description": "Shared types, errors, and logging",
   "keywords": [
     "tapflow",
     "ios",
-    "android",
-    "simulator",
-    "emulator",
-    "device-agent"
+    "simulator"
   ],
   "homepage": "https://github.com/jo-duchan/tapflow",
   "bugs": "https://github.com/jo-duchan/tapflow/issues",
@@ -29,13 +26,6 @@
       "tsx": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./utils": {
-      "types": "./dist/utils/index.d.ts",
-      "source": "./src/utils/index.ts",
-      "tsx": "./src/utils/index.ts",
-      "import": "./dist/utils/index.js",
-      "default": "./dist/utils/index.js"
     }
   },
   "files": [
@@ -51,17 +41,12 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b && tsc -p src/__tests__/tsconfig.json",
-    "test": "vitest run",
+    "typecheck": "tsc -b",
     "lint": "eslint src"
   },
-  "dependencies": {
-    "@tapflowio/protocol": "workspace:*",
-    "ws": "^8.21.3"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.20.4",
-    "@types/ws": "^8.0.0",
     "typescript": "^5.0.0",
     "vitest": "^4.1.11"
   }

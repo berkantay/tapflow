@@ -23,6 +23,5 @@
     "src/__tests__",
     "dist",
     "node_modules"
-  ],
-  "references": [{ "path": "../protocol" }]
+  ]
 }

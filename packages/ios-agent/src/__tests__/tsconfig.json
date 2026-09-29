@@ -1,7 +1,6 @@
 // Type-checks this package's test tree, which the build tsconfig excludes.
 //
-// Tests must not reach `dist`, so they cannot simply join the build's `include` — the same shape as
-// `protocol/tsconfig.assertions.json`, and for the same reason. Wired into the package's `typecheck`
+// Tests must not reach `dist`, so they cannot simply join the build's `include`. Wired into the package's `typecheck`
 // script, which runs it after `tsc -b` so the sibling `dist` it resolves against is current.
 //
 // **Named `tsconfig.json` and placed here on purpose.** typescript-eslint's `projectService` finds a

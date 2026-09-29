@@ -4,7 +4,7 @@ import { promisify } from 'util'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { PlatformError, MAX_CLIPBOARD_BYTES } from '@tapflowio/agent-core'
+import { PlatformError } from '@tapflowio/agent-core'
 
 const execFileAsync = promisify(execFile)
 const ROTATION_HELPER  = join(import.meta.dirname, '..', 'bin', 'rotation-helper')
@@ -33,10 +33,6 @@ function langToKeyboard(lang: string): string {
 }
 
 
-// A hung pasteboard call must not strand the caller: the read path holds a sentinel on the
-// device until it finishes, so "never returns" would leave the device clipboard destroyed.
-const CLIPBOARD_CMD_TIMEOUT_MS = 5_000
-
 // simctl failures reach a user-facing toast. Node's first line is "Command failed: <argv>",
 // which says nothing and echoes the device UDID, so prefer any other line. When there is none
 // (e.g. the timeout path, where stderr is empty) fall back to a plain description rather than
@@ -47,7 +43,7 @@ export function firstLine(e: unknown): string {
   return lines.find((l) => !l.startsWith('Command failed:')) ?? 'the simulator did not respond'
 }
 import type { Device, DeviceStatus } from '@tapflowio/agent-core'
-import { defaultRunner, OutputTooLargeError, type SimctlRunner } from './simctl.js'
+import { defaultRunner, type SimctlRunner } from './simctl.js'
 import { KeyboardHelperDaemon } from './KeyboardHelperDaemon.js'
 
 interface SimctlDevice {
@@ -84,10 +80,6 @@ export function isDeviceMissingError(err: unknown): boolean {
   const text = [e.message, e.stderr].filter((s): s is string => typeof s === 'string').join(' ')
   return /cannot be located on disk|data is no longer present/i.test(text)
 }
-
-/** The device clipboard held more than `MAX_CLIPBOARD_BYTES`. The app did copy — we just cannot
- *  carry it — so a caller mid-handshake must NOT restore over it. */
-export class ClipboardTooLargeError extends PlatformError {}
 
 export class SimctlWrapper {
   private readonly kbd = new KeyboardHelperDaemon()
@@ -271,7 +263,7 @@ export class SimctlWrapper {
   }
 
   // Returns the launched app's host PID (`simctl launch` prints "<bundleId>: <pid>"), or null if it
-  // can't be parsed. The audiotap-helper taps this PID; non-audio callers ignore it.
+  // can't be parsed.
   async launchApp(udid: string, bundleId: string): Promise<number | null> {
     const out = await this.runner.exec('launch', udid, bundleId)
     const m = out.match(/:\s*(\d+)\s*$/)
@@ -280,37 +272,6 @@ export class SimctlWrapper {
 
   async openUrl(deviceId: string, url: string): Promise<void> {
     await this.runner.exec('openurl', deviceId, url)
-  }
-
-  async setPasteboard(deviceId: string, text: string): Promise<void> {
-    try {
-      await this.runner.execWithOpts(
-        { input: text, timeoutMs: CLIPBOARD_CMD_TIMEOUT_MS },
-        'pbcopy', deviceId,
-      )
-    } catch (e) {
-      // This reaches a user-facing toast, and the raw text is multi-line and echoes the argv.
-      throw new PlatformError(`Could not write the device clipboard: ${firstLine(e)}`)
-    }
-  }
-
-  // Read the device pasteboard. Returned verbatim — no trim, since a trailing newline can be
-  // part of the copied text. `maxBuffer` is where the clipboard size ceiling is actually
-  // enforced for iOS: exceeding it rejects rather than buffering unboundedly, so callers do
-  // not re-check the length (a second check there would be unreachable). simctl's own failures are noisy multi-line
-  // strings that end up in a user-facing toast, so they are condensed here.
-  async getPasteboard(deviceId: string): Promise<string> {
-    try {
-      // `maxBuffer` is where the clipboard size ceiling is actually enforced for iOS: exceeding
-      // it rejects rather than buffering without bound, so callers do not re-check the length.
-      return await this.runner.execWithOpts(
-        { timeoutMs: CLIPBOARD_CMD_TIMEOUT_MS, maxBuffer: MAX_CLIPBOARD_BYTES },
-        'pbpaste', deviceId,
-      )
-    } catch (e) {
-      const message = `Could not read the device clipboard: ${firstLine(e)}`
-      throw e instanceof OutputTooLargeError ? new ClipboardTooLargeError(message) : new PlatformError(message)
-    }
   }
 
   async screenshot(udid: string, format: 'png' | 'jpeg' = 'png'): Promise<Buffer> {
@@ -356,45 +317,6 @@ export class SimctlWrapper {
 
   async rotate(udid: string, orientation: 'portrait' | 'landscapeLeft' | 'landscapeRight' | 'portraitUpsideDown'): Promise<void> {
     await execFileAsync(ROTATION_HELPER, [orientation, udid])
-  }
-
-  /**
-   * Make the status bar read as a device with no service, or hand it back (#607).
-   *
-   * **Never on its own.** This changes pixels and nothing else, so a device showing no bars while
-   * its app still loads is the exact false result the network feature exists to prevent — which is
-   * why the only caller is `SimulatorNetwork`, where it goes with the two layers that do the work.
-   *
-   * `clear` removes **every** override, not only the three set here; there is no per-key release.
-   * That is correct today because these are the only overrides tapflow sets, and it is the thing to
-   * check first if a later feature starts overriding the clock or the battery.
-   */
-  async setStatusBarOffline(udid: string, offline: boolean): Promise<void> {
-    if (!offline) {
-      await this.runner.exec('status_bar', udid, 'clear')
-      return
-    }
-    await this.runner.exec(
-      'status_bar', udid, 'override',
-      '--dataNetwork', 'hide',
-      '--wifiMode', 'failed',
-      '--cellularMode', 'notSupported',
-    )
-  }
-
-  /**
-   * Set an environment variable for **every process the simulator starts from now on** (#607).
-   *
-   * That breadth is the delivery mechanism, not an accident: the dylib this arms has to reach the
-   * app's WebView helpers, and `WebKit.Networking` is a sibling process under `launchd_sim` rather
-   * than a child of the app, so the per-launch `SIMCTL_CHILD_…` convention never reaches it. The
-   * dylib's own bundle-id gate is what keeps it from touching SpringBoard and the rest.
-   *
-   * **Processes already running do not see it.** dyld reads the environment at process start, so
-   * anything that has to be armed must be set before the app is launched, not after.
-   */
-  async setSimulatorEnv(udid: string, name: string, value: string): Promise<void> {
-    await this.runner.exec('spawn', udid, 'launchctl', 'setenv', name, value)
   }
 
   async showSoftwareKeyboard(udid: string): Promise<void> {

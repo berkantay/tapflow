@@ -24,9 +24,12 @@
     "dist",
     "node_modules"
   ],
-  "references": [{ "path": "../protocol" },
+  "references": [
     {
       "path": "../agent-core"
+    },
+    {
+      "path": "../ios-agent"
     }
   ]
 }

@@ -1,39 +1,19 @@
 # @tapflowio/mcp-server
 
-[Model Context Protocol](https://modelcontextprotocol.io) server for [tapflow](https://github.com/jo-duchan/tapflow) — lets Claude Code, Codex, and any MCP-compatible LLM agent control iOS simulators and Android emulators as native tools.
-
-## Setup
-
-```sh
-npm install -g @tapflowio/mcp-server
-```
-
-Point it at your tapflow relay:
+MCP server that lets an LLM agent drive iOS simulators.
 
 ```jsonc
-// e.g. Claude Code: .mcp.json
-{
-  "mcpServers": {
-    "tapflow": {
-      "command": "tapflow-mcp",
-      "env": {
-        "TAPFLOW_RELAY_URL": "ws://localhost:4000",
-        "TAPFLOW_TOKEN": "tflw_pat_..." // API-type PAT (view, builds:write): list_builds calls GET /builds, which needs builds:write; not needed for a localhost relay WS, but REST endpoints require it
-      }
-    }
-  }
-}
+// .mcp.json
+{ "mcpServers": { "tapflow": { "command": "tapflow", "args": ["mcp", "--device", "iPhone 17 Pro"] } } }
 ```
 
-## Tools
+Or over HTTP, for an agent on another machine: `TAPFLOW_MCP_TOKEN=… tapflow mcp --http 7070`
+(binds 127.0.0.1 unless `--host` is given; every request needs `Authorization: Bearer <token>`).
 
-`list_devices`, `connect_device`, `disconnect_device`, `boot_device`, `screenshot`, `query_ui_tree`, `run_flow`, `tap`, `swipe`, `type_text`, `press_key`, `press_button`, `install_app`, `launch_app`, `list_builds`
+Tools: `list_devices`, `boot_device`, `shutdown_device`, `install_app`, `launch_app`, `open_url`,
+`query_ui_tree`, `screenshot`, `tap`, `tap_element`, `swipe`, `type_text`, `press_key`,
+`press_button`, `run_flow`.
 
-- `query_ui_tree` returns the accessibility tree as `{ role, label, identifier, frame, enabled }` with frames normalized 0-1 — tap by element instead of guessing coordinates from screenshots.
-- `run_flow` replays a [`@tapflowio/flow-runner`](https://www.npmjs.com/package/@tapflowio/flow-runner) YAML flow deterministically — author once with the agent, replay with zero LLM calls.
-
-Full guide: [tapflow.dev/automation/mcp-server](https://www.tapflow.dev/automation/mcp-server)
-
-## License
-
-[MIT](LICENSE) — part of the [tapflow](https://github.com/jo-duchan/tapflow) project.
+- Coordinates are normalized 0-1, the space `query_ui_tree` reports frames in.
+- `tap_element` taps by identifier or label and refuses an ambiguous match, naming the candidates.
+- Tools act on the device last booted or named; `--device` / `TAPFLOW_DEVICE` sets the default.

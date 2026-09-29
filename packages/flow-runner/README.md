@@ -1,47 +1,28 @@
 # @tapflowio/flow-runner
 
-Deterministic YAML flow runner for [tapflow](https://github.com/jo-duchan/tapflow) — replay UI test flows against iOS simulators and Android emulators with **zero LLM calls**.
-
-Flows are authored once (by an LLM agent through `@tapflowio/mcp-server`, or by hand) and replayed deterministically: same input, same execution, no API cost in CI.
-
-## Usage
-
-Most users run flows through the tapflow CLI:
-
-```sh
-tapflow flow run .tapflow/flows/*.yaml --build 42 --junit report.xml
-```
-
-Exit codes: `0` all flows passed · `1` a product failure or a mixed run · `2` every failure was environmental/configuration-related.
-
-## Flow YAML
+Deterministic YAML flows for iOS simulators: author a flow once, replay it on every build with no
+model in the loop.
 
 ```yaml
-name: login-smoke
-appId: com.example.app
+name: open-general
+appId: com.apple.Preferences
 steps:
-  - clearState              # reset app data (pm clear / data-container wipe)
-  - launchApp               # launches the build under test (--build)
-  - assertVisible: "Sign in"
-  - tapOn: { id: "com.example.app:id/email" }
-  - inputText: "user@example.com"
-  - pressKey: Enter
-  - tapOn: "Sign in"
-  - assertVisible: { label: "Orders", timeout: 15 }
+  - launchApp
+  - tapOn:
+      id: com.apple.settings.general
+  - assertVisible: About
 ```
 
-- 10-step vocabulary: `clearState / launchApp / tapOn / inputText / pressKey / swipe / scroll / openUrl / assertVisible / assertNotVisible`. No sleep step — waiting is always condition-based.
-- Selectors: a bare string matches exact identifier → exact label → partial label. Ambiguous `tapOn` matches fail loudly instead of picking one.
-- A JSON Schema for editor autocomplete ships at `schema/tapflow-flow.schema.json`.
-
-## Library API
+Steps: `clearState`, `launchApp`, `tapOn`, `inputText`, `pressKey`, `swipe`, `scroll`, `openUrl`,
+`assertVisible`, `assertNotVisible`. A selector is a string (identifier, then exact label, then
+part of a label) or `{ id, label, role, index, timeout }`. A tap that matches several elements
+fails and names them rather than guessing.
 
 ```ts
-import { parseFlow, runFlow, RelayClient, RelayDriver, toJUnitXml } from '@tapflowio/flow-runner'
+import { parseFlow, runFlow, SimulatorDriver } from '@tapflowio/flow-runner'
+const flow = parseFlow(yamlText, 'open-general.yaml')
+const result = await runFlow(flow, new SimulatorDriver(sim, flow.appId))
 ```
 
-The engine drives a transport-agnostic `FlowDriver` interface; `RelayDriver` implements it against a tapflow relay (WebSocket + REST).
-
-## License
-
-[MIT](LICENSE) — part of the [tapflow](https://github.com/jo-duchan/tapflow) project.
+`result.failureKind` is `product` (a selector or assertion) or `environment` (the simulator, its
+input channel, or the UI-tree runner), so CI can tell a broken build from a broken runner.

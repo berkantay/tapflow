@@ -1,13 +1,11 @@
 {
   "name": "@tapflowio/mcp-server",
   "version": "0.26.1",
-  "description": "MCP server for tapflow — lets LLM agents control iOS/Android simulators via Model Context Protocol",
+  "description": "MCP server that lets LLM agents drive iOS simulators",
   "keywords": [
-    "tapflow",
     "mcp",
     "model-context-protocol",
     "ios",
-    "android",
     "simulator",
     "ai-agent"
   ],
@@ -21,8 +19,8 @@
   "license": "MIT",
   "author": "tapflow contributors",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/lib.js",
+  "types": "dist/lib.d.ts",
   "bin": {
     "tapflow-mcp": "dist/index.js"
   },
@@ -42,16 +40,25 @@
     "lint": "eslint src"
   },
   "dependencies": {
-    "@tapflowio/protocol": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@tapflowio/agent-core": "workspace:*",
     "@tapflowio/flow-runner": "workspace:*",
-    "ws": "^8.21.3",
+    "@tapflowio/ios-agent": "workspace:*",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",
-    "@types/ws": "^8.0.0",
     "typescript": "^5.0.0",
     "vitest": "^4.1.11"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "source": "./src/lib.ts",
+      "tsx": "./src/lib.ts",
+      "import": "./dist/lib.js",
+      "default": "./dist/lib.js"
+    },
+    "./package.json": "./package.json"
   }
 }

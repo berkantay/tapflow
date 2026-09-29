@@ -2,9 +2,8 @@ import type { UIElement } from '@tapflowio/agent-core'
 import type { Flow, Selector, Step, ScrollDirection } from './schema.js'
 import { EnvironmentStepError, isEnvironmentStepFailure, TransientQueryError } from './errors.js'
 
-// Transport-agnostic device surface the engine drives (DIP): the relay-backed
-// implementation lives in RelayDriver, tests use fakes, and mcp-server adapts
-// its own client. All coordinates are normalized 0-1.
+// Device surface the engine drives: SimulatorDriver for a real simulator, fakes in tests.
+// All coordinates are normalized 0-1.
 export interface FlowDriver {
   // Optional AbortSignal so a stalled query can't block the poll loop past the step deadline.
   queryUITree(signal?: AbortSignal): Promise<UIElement[]>
@@ -40,7 +39,7 @@ export interface FlowResult {
   failureMessage?: string
   failureScreenshot?: Buffer
   /**
-   * Which side failed: 'environment' for relay/agent/session-level causes (the CLI
+   * Which side failed: 'environment' for simulator-level causes (the CLI
    * exits 2), 'product' for selector, assertion and other failures (exit 1). Present
    * exactly when status is 'failed'. The engine is what classifies, so consumers
    * (CLI, MCP) never branch on prose.

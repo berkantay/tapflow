@@ -9,6 +9,8 @@ import XCTest
 // Routes:
 //   GET /health                     → "ok" (readiness probe)
 //   GET /tree?bundleId=<id>         → the app's XCUIApplication.debugDescription (text)
+//   GET /type?bundleId=<id>&text=<t> → types <t> into the app's focused element
+//   GET /key?bundleId=<id>&name=<k>  → presses a named keyboard key (return, delete, tab, escape, space)
 final class TreeServer {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "dev.tapflow.treeserver")
@@ -82,8 +84,40 @@ final class TreeServer {
             let app = XCUIApplication(bundleIdentifier: bundleId)
             return ("200 OK", app.debugDescription)
         }
+        if path.hasPrefix("/type") || path.hasPrefix("/key") {
+            guard let bundleId = query(path, "bundleId"), !bundleId.isEmpty else {
+                return ("400 Bad Request", "missing bundleId")
+            }
+            let text: String
+            if path.hasPrefix("/type") {
+                guard let t = query(path, "text") else { return ("400 Bad Request", "missing text") }
+                text = t
+            } else {
+                guard let name = query(path, "name"), let key = keyText[name] else {
+                    return ("400 Bad Request", "unknown key; expected one of \(keyText.keys.sorted().joined(separator: ", "))")
+                }
+                text = key
+            }
+            let app = XCUIApplication(bundleIdentifier: bundleId)
+            // typeText without a focused element records a test failure rather than returning one,
+            // so focus is checked first and reported as a plain error.
+            let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
+            guard focused.exists else { return ("409 Conflict", "no element has keyboard focus; tap a text field first") }
+            focused.typeText(text)
+            return ("200 OK", "ok")
+        }
         return ("404 Not Found", "unknown route")
     }
+
+    private static let keyText: [String: String] = [
+        "return": XCUIKeyboardKey.return.rawValue,
+        "enter": XCUIKeyboardKey.return.rawValue,
+        "delete": XCUIKeyboardKey.delete.rawValue,
+        "backspace": XCUIKeyboardKey.delete.rawValue,
+        "tab": XCUIKeyboardKey.tab.rawValue,
+        "escape": XCUIKeyboardKey.escape.rawValue,
+        "space": XCUIKeyboardKey.space.rawValue,
+    ]
 
     private static func query(_ path: String, _ key: String) -> String? {
         guard let q = path.split(separator: "?").dropFirst().first else { return nil }
