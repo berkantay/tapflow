@@ -6,14 +6,24 @@ const START_TIMEOUT_MS = 10_000
 const STOP_TIMEOUT_MS = 30_000
 const STARTED_MARKER = 'Recording started'
 
+/** How a tapped element was found, when it was found by selector rather than by coordinates. */
+export interface TapSelector {
+  id?: string
+  label?: string
+  text?: string
+  role?: string
+  index?: number
+}
+
 /** Something that happened on the device while it was being recorded, `t` ms after the video's first frame. */
 export type RecordedAction =
-  | { t: number; kind: 'tap'; x: number; y: number; label?: string }
+  | { t: number; kind: 'tap'; x: number; y: number; label?: string; selector?: TapSelector }
   | { t: number; kind: 'swipe'; from: [number, number]; to: [number, number]; durationMs: number }
   | { t: number; kind: 'type'; text: string }
   | { t: number; kind: 'key'; name: string }
   | { t: number; kind: 'button'; name: string }
   | { t: number; kind: 'launch'; bundleId: string }
+  | { t: number; kind: 'terminate'; bundleId: string }
   | { t: number; kind: 'openUrl'; url: string }
   | { t: number; kind: 'step'; name: string; status: 'started' | 'passed' | 'failed'; message?: string }
   | { t: number; kind: 'note'; text: string }

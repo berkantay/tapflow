@@ -10,7 +10,7 @@ import { TouchHelper } from './TouchHelper.js'
 import { XCUITreeReader } from './XCUITreeReader.js'
 import { LeanStore } from './LeanStore.js'
 import { LEAN_LABELS } from './leanLabels.js'
-import { redactUrl, ScreenRecorder, type ActionInput, type Recording } from './Recorder.js'
+import { redactUrl, ScreenRecorder, type ActionInput, type Recording, type TapSelector } from './Recorder.js'
 
 const logger = createLogger('ios-agent:simulator')
 
@@ -221,6 +221,20 @@ export class Simulator {
     this.recorder.mark({ kind: 'launch', bundleId })
   }
 
+  /** Quit an app. Not running is fine. */
+  async terminate(bundleId: string): Promise<void> {
+    await this.simctl.terminateApp(this.udid, bundleId)
+    this.recorder.mark({ kind: 'terminate', bundleId })
+  }
+
+  /**
+   * Write a user default inside the simulator, e.g. an app's own preferences (`domain` = its bundle
+   * id). An app reads its defaults at launch, so quit it first and launch it after.
+   */
+  writeDefaults(domain: string, key: string, value: boolean | number | string): Promise<void> {
+    return this.simctl.writeDefaults(this.udid, domain, key, value)
+  }
+
   /** Wipe an app's data container without uninstalling it. */
   clearAppData(bundleId: string): Promise<void> {
     return this.simctl.clearAppData(this.udid, bundleId)
@@ -272,11 +286,14 @@ export class Simulator {
     return { title: alert.label, elements }
   }
 
-  /** Tap a normalized point. `label` names what was tapped in a recording's action log. */
-  async tap(x: number, y: number, label?: string): Promise<void> {
+  /**
+   * Tap a normalized point. `label` names what was tapped, and `selector` how it was found; both go
+   * to a recording's action log, where `selector` lets the tap be replayed as a flow step.
+   */
+  async tap(x: number, y: number, label?: string, selector?: TapSelector): Promise<void> {
     const touch = await this.input()
     if (!touch.touchStart(x, y) || !touch.touchEnd()) throw this.inputRefused('tap', touch)
-    this.recorder.mark({ kind: 'tap', x, y, ...(label ? { label } : {}) })
+    this.recorder.mark({ kind: 'tap', x, y, ...(label ? { label } : {}), ...(selector ? { selector } : {}) })
   }
 
   async swipe(from: [number, number], to: [number, number], durationMs = 300): Promise<void> {

@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Device, UIElement } from '@tapflowio/agent-core'
 import type { Simulator } from '@tapflowio/ios-agent'
@@ -29,6 +32,9 @@ function fakeSim(tree: UIElement[] = []) {
     stopRecording: vi.fn(async () => ({ path: '/tmp/r.mp4', actionsPath: '/tmp/r.mp4.actions.json', durationMs: 1200, bytes: 10, actions: [{ t: 300, kind: 'note', text: 'bug here' }] })),
     mark: vi.fn(),
     systemAlert: vi.fn(async (): Promise<{ title: string; elements: UIElement[] } | null> => null),
+    openUrl: vi.fn(async () => {}),
+    terminate: vi.fn(async () => {}),
+    writeDefaults: vi.fn(async () => {}),
   }
 }
 
@@ -48,7 +54,7 @@ describe('tap_element', () => {
     const sim = fakeSim([el('button', 'Sign in', 0.4), el('text', 'Welcome')])
     const r = await tools(sim)('tap_element', { text: 'Sign in' })
     expect(r.isError).toBeUndefined()
-    expect(sim.tap).toHaveBeenCalledWith(0.5, expect.closeTo(0.25), 'Sign in')
+    expect(sim.tap).toHaveBeenCalledWith(0.5, expect.closeTo(0.25), 'Sign in', { text: 'Sign in' })
   })
 
   it('refuses an ambiguous match and names the candidates', async () => {
@@ -62,7 +68,7 @@ describe('tap_element', () => {
   it('picks by role and index when asked', async () => {
     const sim = fakeSim([el('button', 'Save', 0.1), el('cell', 'Save draft', 0.5)])
     await tools(sim)('tap_element', { text: 'Sav', role: 'cell' })
-    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Save draft')
+    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Save draft', { text: 'Sav', role: 'cell' })
   })
 
   it('reports no match without tapping', async () => {
@@ -125,7 +131,7 @@ describe('recording tools', () => {
   it('passes the tapped element\'s label to the recording', async () => {
     const sim = fakeSim([el('button', 'Sign in', 0.4)])
     await tools(sim)('tap_element', { text: 'Sign in' })
-    expect(sim.tap).toHaveBeenCalledWith(0.5, expect.closeTo(0.25), 'Sign in')
+    expect(sim.tap).toHaveBeenCalledWith(0.5, expect.closeTo(0.25), 'Sign in', { text: 'Sign in' })
   })
 })
 
@@ -143,7 +149,7 @@ describe('tap_element and system alerts', () => {
     sim.systemAlert.mockResolvedValueOnce(alert)
     const r = await tools(sim)('tap_element', { label: 'Open' })
     expect(r.content[0].text).toBe('Tapped system alert button "Open"')
-    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Open')
+    expect(sim.tap).toHaveBeenCalledWith(0.6, expect.closeTo(0.25), 'Open', undefined)
     expect(sim.uiTree).not.toHaveBeenCalled()
   })
 
@@ -168,5 +174,70 @@ describe('tap_element and system alerts', () => {
     sim.systemAlert.mockResolvedValueOnce(alert)
     const out = JSON.parse((await tools(sim)('query_ui_tree')).content[0].text!)
     expect(out.systemAlert).toEqual({ title: 'Open in “Example Dev”?', buttons: ['Cancel', 'Open'] })
+  })
+})
+
+describe('wait_for', () => {
+  it('returns once the element shows up', async () => {
+    const sim = fakeSim([])
+    sim.uiTree.mockResolvedValueOnce([]).mockResolvedValue([el('text', 'Completed')])
+    const r = await tools(sim)('wait_for', { text: 'Completed', timeoutMs: 3000 })
+    expect(r.isError).toBeUndefined()
+    expect(r.content[0].text).toMatch(/^Found text "Completed" after \d+ms$/)
+  })
+
+  it('waits for an element to go', async () => {
+    const sim = fakeSim([])
+    sim.uiTree.mockResolvedValueOnce([el('text', 'Loading')]).mockResolvedValue([])
+    const r = await tools(sim)('wait_for', { text: 'Loading', gone: true, timeoutMs: 3000 })
+    expect(r.content[0].text).toMatch(/^Gone after/)
+  })
+
+  it('times out naming a system alert that is in the way', async () => {
+    const sim = fakeSim([el('text', 'Home')])
+    sim.systemAlert.mockResolvedValue({ title: 'Allow notifications?', elements: [{ ...el('button', 'Allow'), system: true }] })
+    const r = await tools(sim)('wait_for', { text: 'Home', timeoutMs: 600 })
+    expect(r.isError).toBe(true)
+    expect(r.content[0].text).toMatch(/not found after 600ms; a system alert is up \("Allow notifications\?"\)/)
+  })
+
+  it('keeps polling through a failed tree read', async () => {
+    const sim = fakeSim([])
+    sim.uiTree.mockRejectedValueOnce(new Error('runner starting')).mockResolvedValue([el('button', 'OK')])
+    const r = await tools(sim)('wait_for', { label: 'OK', timeoutMs: 3000 })
+    expect(r.isError).toBeUndefined()
+  })
+})
+
+describe('app and URL tools', () => {
+  it('does not echo a login token back into the transcript', async () => {
+    const sim = fakeSim()
+    const r = await tools(sim)('open_url', { url: 'app://?tk=abc123' })
+    expect(sim.openUrl).toHaveBeenCalledWith('app://?tk=abc123')
+    expect(r.content[0].text).toBe('Opened app://?tk=…')
+  })
+
+  it('quits an app and writes defaults', async () => {
+    const sim = fakeSim()
+    const run = tools(sim)
+    await run('terminate_app', { bundleId: 'com.x' })
+    await run('write_defaults', { domain: 'com.x', key: 'Flag', value: false })
+    expect(sim.terminate).toHaveBeenCalledWith('com.x')
+    expect(sim.writeDefaults).toHaveBeenCalledWith('com.x', 'Flag', false)
+  })
+})
+
+describe('export_flow', () => {
+  it('writes a flow from a recording\'s actions file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'export-'))
+    const actions = path.join(dir, 'r.mp4.actions.json')
+    fs.writeFileSync(actions, JSON.stringify({ actions: [
+      { t: 0, kind: 'launch', bundleId: 'com.x' },
+      { t: 10, kind: 'tap', x: 0.5, y: 0.5, label: 'Go', selector: { id: 'go' } },
+    ] }))
+    const out = path.join(dir, 'flows', 'go.yaml')
+    const r = await tools(fakeSim())('export_flow', { actions, path: out, name: 'go' })
+    expect(r.content[0].text).toMatch(/2 steps, 0 actions kept as comments/)
+    expect(fs.readFileSync(out, 'utf8')).toContain('tapOn: { id: "go" }')
   })
 })

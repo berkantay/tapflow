@@ -6,6 +6,7 @@ tapflow devices                        # list simulators
 tapflow boot "iPhone 17 Pro" [--erase] [--lean]
 tapflow install "iPhone 17 Pro" ./build/App.app
 tapflow flow run flows/*.yaml --device "iPhone 17 Pro" [--app ./App.app] [--junit report.xml] [--record out/]
+tapflow flow export out/01-login.mp4.actions.json --name login --out flows/login.yaml
 tapflow mcp [--device <d>] [--http <port>]
 ```
 

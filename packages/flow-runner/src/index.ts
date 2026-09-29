@@ -5,3 +5,5 @@ export type { FlowDriver, FlowResult, StepResult, EngineOptions, StepEvent } fro
 export { SimulatorDriver, recordSteps } from './SimulatorDriver.js'
 export { toJUnitXml } from './junit.js'
 export { EnvironmentStepError, TransientQueryError, isEnvironmentStepFailure, markEnvironmentFailure } from './errors.js'
+export { recordingToFlow } from './fromRecording.js'
+export type { RecordingToFlowOptions, RecordingToFlowResult } from './fromRecording.js'

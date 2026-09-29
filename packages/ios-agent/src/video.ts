@@ -97,6 +97,7 @@ function describe(a: RecordedAction): string | null {
     case 'key': return `key ${a.name}`
     case 'button': return `button ${a.name}`
     case 'launch': return `launch ${a.bundleId}`
+    case 'terminate': return `quit ${a.bundleId}`
     case 'openUrl': return `open ${a.url}`
     case 'note': return a.text
     case 'step':

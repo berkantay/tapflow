@@ -26,3 +26,7 @@ const result = await runFlow(flow, new SimulatorDriver(sim, flow.appId))
 
 `result.failureKind` is `product` (a selector or assertion) or `environment` (the simulator, its
 input channel, or the UI-tree runner), so CI can tell a broken build from a broken runner.
+
+`recordingToFlow(actions, { name })` turns a recording's action log into flow YAML (validated with
+the parser): taps found by selector become `tapOn` steps, and coordinate taps, hardware buttons and
+marks are kept as comments to fill in. URLs are redacted again on the way out.

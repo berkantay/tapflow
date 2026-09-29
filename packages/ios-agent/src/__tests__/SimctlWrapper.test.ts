@@ -539,3 +539,35 @@ describe('SimctlWrapper', () => {
     })
   })
 })
+
+describe('SimctlWrapper app control', () => {
+  function runner(fail?: string) {
+    return {
+      exec: vi.fn(async () => { if (fail) throw Object.assign(new Error('failed'), { stderr: fail }); return '' }),
+      execWithOpts: vi.fn(async () => ''),
+      execBinary: vi.fn(async () => Buffer.alloc(0)),
+    }
+  }
+
+  it('treats terminating an app that is not running as done', async () => {
+    const r = runner('Simulator device failed to terminate com.x.\nAn error was encountered (domain=NSPOSIXErrorDomain, code=3)')
+    await expect(new SimctlWrapper(r).terminateApp('U', 'com.x')).resolves.toBeUndefined()
+  })
+
+  it('still reports other terminate failures', async () => {
+    await expect(new SimctlWrapper(runner('Invalid device: U')).terminateApp('U', 'com.x')).rejects.toThrow()
+  })
+
+  it('writes typed defaults inside the simulator', async () => {
+    const r = runner()
+    const s = new SimctlWrapper(r)
+    await s.writeDefaults('U', 'com.x', 'Flag', true)
+    await s.writeDefaults('U', 'com.x', 'Count', 3)
+    await s.writeDefaults('U', 'com.x', 'Ratio', 0.5)
+    await s.writeDefaults('U', 'com.x', 'Name', 'ada')
+    expect(r.exec.mock.calls.map((c) => (c as string[]).slice(5))).toEqual([
+      ['Flag', '-bool', 'YES'], ['Count', '-int', '3'], ['Ratio', '-float', '0.5'], ['Name', '-string', 'ada'],
+    ])
+    expect((r.exec.mock.calls[0] as string[]).slice(0, 5)).toEqual(['spawn', 'U', 'defaults', 'write', 'com.x'])
+  })
+})

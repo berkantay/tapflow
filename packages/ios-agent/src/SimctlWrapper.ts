@@ -258,6 +258,26 @@ export class SimctlWrapper {
     }
   }
 
+  /** Quit an app. Not running is not an error. */
+  async terminateApp(udid: string, bundleId: string): Promise<void> {
+    try {
+      await this.runner.exec('terminate', udid, bundleId)
+    } catch (err: unknown) {
+      const stderr = (err as { stderr?: string }).stderr ?? ''
+      // Measured: a bundle that is not running fails with "failed to terminate" and POSIX code 3 (ESRCH).
+      if (/code=3\b|found nothing to terminate|not running/i.test(stderr)) return
+      throw err
+    }
+  }
+
+  /** `defaults write` inside the simulator, typed by the JavaScript value. */
+  async writeDefaults(udid: string, domain: string, key: string, value: boolean | number | string): Promise<void> {
+    const typed = typeof value === 'boolean' ? ['-bool', value ? 'YES' : 'NO']
+      : typeof value === 'number' ? (Number.isInteger(value) ? ['-int', String(value)] : ['-float', String(value)])
+        : ['-string', value]
+    await this.runner.exec('spawn', udid, 'defaults', 'write', domain, key, ...typed)
+  }
+
   async installApp(udid: string, appPath: string): Promise<void> {
     await this.runner.exec('install', udid, appPath)
   }

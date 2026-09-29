@@ -3,8 +3,9 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { matchSelector, parseFlow, recordSteps, runFlow, SimulatorDriver } from '@tapflowio/flow-runner'
-import { BUTTON_NAMES, KEY_NAMES, exportVideo, timeline } from '@tapflowio/ios-agent'
+import { matchSelector, parseFlow, recordingToFlow, recordSteps, runFlow, SimulatorDriver } from '@tapflowio/flow-runner'
+import { BUTTON_NAMES, KEY_NAMES, exportVideo, redactUrl, timeline, type RecordedAction, type Simulator, type SystemAlert } from '@tapflowio/ios-agent'
+import type { UIElement } from '@tapflowio/agent-core'
 import type { DeviceContext } from './devices.js'
 
 type ToolResult = { content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>; isError?: boolean }
@@ -30,6 +31,33 @@ async function attempt(name: string, fn: () => Promise<ToolResult>): Promise<Too
   } catch (e) {
     return err(`${name} failed: ${e instanceof Error ? e.message : String(e)}`)
   }
+}
+
+interface ElementQuery {
+  text?: string
+  id?: string
+  label?: string
+  role?: string
+}
+
+/**
+ * What a selector matches on screen right now. A system alert covers the app, so while one is up
+ * only its elements count. `label` is exact here; matchSelector's label falls back to a partial
+ * match, which is what `text` is for.
+ */
+async function findElements(sim: Simulator, q: ElementQuery): Promise<{ alert: SystemAlert | null; matches: UIElement[] }> {
+  const alert = await sim.systemAlert()
+  const pool = alert ? alert.elements : await sim.uiTree()
+  let matches = matchSelector(pool, { text: q.text, id: q.id, role: q.role })
+  if (q.label !== undefined) matches = matches.filter((e) => e.label === q.label)
+  return { alert, matches }
+}
+
+const selectorShape = {
+  text: z.string().optional().describe('Identifier, exact label, or part of a label'),
+  id: z.string().optional().describe('Exact accessibility identifier'),
+  label: z.string().optional().describe('Exact label'),
+  role: z.string().optional().describe('button, cell, input, text, switch, …'),
 }
 
 const device = z.string().optional().describe('Simulator name or UDID. Defaults to the device last used here.')
@@ -93,11 +121,39 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
   )
 
   server.registerTool(
+    'terminate_app',
+    { description: 'Quit an app. Not running is fine.', inputSchema: { bundleId: z.string(), device } },
+    ({ bundleId, device: name }) => attempt('terminate_app', async () => {
+      await (await ctx.resolve(name)).terminate(bundleId)
+      return ok(`Quit ${bundleId}`)
+    }),
+  )
+
+  server.registerTool(
+    'write_defaults',
+    {
+      description:
+        'Write a user default inside the simulator, e.g. an app\'s own preferences (domain = its bundle id). ' +
+        'An app reads its defaults at launch: terminate_app first, launch_app after.',
+      inputSchema: {
+        domain: z.string().describe('Bundle id, or a system domain such as -g'),
+        key: z.string(),
+        value: z.union([z.boolean(), z.number(), z.string()]),
+        device,
+      },
+    },
+    ({ domain, key, value, device: name }) => attempt('write_defaults', async () => {
+      await (await ctx.resolve(name)).writeDefaults(domain, key, value)
+      return ok(`Set ${domain} ${key} = ${JSON.stringify(value)}`)
+    }),
+  )
+
+  server.registerTool(
     'open_url',
     { description: 'Open a URL or deep link on the device.', inputSchema: { url: z.string(), device } },
     ({ url, device: name }) => attempt('open_url', async () => {
       await (await ctx.resolve(name)).openUrl(url)
-      return ok(`Opened ${url}`)
+      return ok(`Opened ${redactUrl(url)}`)
     }),
   )
 
@@ -160,10 +216,7 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
         '"text" matches an exact identifier, then an exact label, then part of a label. Narrow with role and index when several match. ' +
         'When a system alert covers the app, only its buttons can be tapped, and the error names them.',
       inputSchema: {
-        text: z.string().optional().describe('Identifier, exact label, or part of a label'),
-        id: z.string().optional().describe('Exact accessibility identifier'),
-        label: z.string().optional().describe('Exact label'),
-        role: z.string().optional().describe('button, cell, input, text, switch, …'),
+        ...selectorShape,
         index: z.number().int().min(0).optional().describe('Which match to tap when several remain (0-based)'),
         device,
       },
@@ -171,11 +224,7 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
     ({ text, id, label, role, index, device: name }) => attempt('tap_element', async () => {
       if (text === undefined && id === undefined && label === undefined) return err('tap_element needs one of text, id or label')
       const sim = await ctx.resolve(name)
-      const alert = await sim.systemAlert()
-      const pool = alert ? alert.elements : await sim.uiTree()
-      let matches = matchSelector(pool, { text, id, role })
-      // `label` is exact here; matchSelector's label falls back to a partial match, which is what `text` is for.
-      if (label !== undefined) matches = matches.filter((e) => e.label === label)
+      const { alert, matches } = await findElements(sim, { text, id, label, role })
       if (matches.length === 0) {
         if (alert) {
           const buttons = alert.elements.filter((e) => e.role === 'button').map((e) => `"${e.label}"`).join(', ')
@@ -189,8 +238,47 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
         return err(`tap_element: ${matches.length} elements matched (${matches.slice(0, 5).map((m) => `${m.role} "${m.label}"`).join(', ')}); pass role or index`)
       }
       const { x, y, width, height } = target.frame
-      await sim.tap(x + width / 2, y + height / 2, target.label || target.identifier)
+      // The selector goes to the recording's log, so export_flow can replay this tap as a tapOn step.
+      const selector = { ...(id !== undefined ? { id } : {}), ...(label !== undefined ? { label } : {}), ...(text !== undefined ? { text } : {}), ...(role !== undefined ? { role } : {}), ...(index !== undefined ? { index } : {}) }
+      await sim.tap(x + width / 2, y + height / 2, target.label || target.identifier, target.system ? undefined : selector)
       return ok(`Tapped ${target.system ? 'system alert ' : ''}${target.role} "${target.label}"`)
+    }),
+  )
+
+  server.registerTool(
+    'wait_for',
+    {
+      description:
+        'Wait until an element is on screen (or, with gone: true, until it is not), polling the accessibility tree. ' +
+        'Use this instead of sleeping: after a launch, a tap that navigates, or while something loads. Same selectors as tap_element.',
+      inputSchema: {
+        ...selectorShape,
+        gone: z.boolean().optional().describe('Wait for the element to disappear instead'),
+        timeoutMs: z.number().int().min(100).max(120_000).optional().describe('Default 10000'),
+        device,
+      },
+    },
+    ({ text, id, label, role, gone, timeoutMs, device: name }) => attempt('wait_for', async () => {
+      if (text === undefined && id === undefined && label === undefined && role === undefined) return err('wait_for needs one of text, id, label or role')
+      const sim = await ctx.resolve(name)
+      const started = Date.now()
+      const deadline = started + (timeoutMs ?? 10_000)
+      let last: { alert: SystemAlert | null; matches: UIElement[] } | undefined
+      for (;;) {
+        try {
+          last = await findElements(sim, { text, id, label, role })
+          if (gone ? last.matches.length === 0 : last.matches.length > 0) {
+            const waited = Date.now() - started
+            return ok(gone ? `Gone after ${waited}ms` : `Found ${last.matches[0].role} "${last.matches[0].label}" after ${waited}ms`)
+          }
+        } catch {
+          // A tree read can fail while the app is still coming up; keep polling until the deadline.
+        }
+        if (Date.now() >= deadline) break
+        await new Promise((r) => setTimeout(r, 500))
+      }
+      const alertNote = last?.alert ? `; a system alert is up ("${last.alert.title}")` : ''
+      return err(`wait_for: ${gone ? 'still on screen' : 'not found'} after ${timeoutMs ?? 10_000}ms${alertNote}`)
     }),
   )
 
@@ -313,6 +401,28 @@ export function registerTools(server: McpServer, ctx: DeviceContext): void {
         }
       }
       return ok(JSON.stringify(result, null, 2))
+    }),
+  )
+
+  server.registerTool(
+    'export_flow',
+    {
+      description:
+        'Turn a recording into a replayable flow: pass the actions file stop_recording returned. Taps made with tap_element become ' +
+        'tapOn steps; coordinate taps, hardware buttons and marks become comments to fill in. Replay it with run_flow.',
+      inputSchema: {
+        actions: z.string().describe('The .actions.json path from stop_recording'),
+        path: z.string().describe('Where to write the flow .yaml'),
+        name: z.string().describe('Flow name'),
+        appId: z.string().optional().describe('App under test (default: the first app launched in the recording)'),
+      },
+    },
+    ({ actions: actionsPath, path: flowPath, name, appId }) => attempt('export_flow', async () => {
+      const log = JSON.parse(fs.readFileSync(actionsPath, 'utf-8')) as { actions: RecordedAction[] }
+      const flow = recordingToFlow(log.actions, { name, appId })
+      fs.mkdirSync(path.dirname(path.resolve(flowPath)), { recursive: true })
+      fs.writeFileSync(flowPath, flow.yaml)
+      return ok(`Wrote ${flowPath}: ${flow.steps} steps, ${flow.skipped} actions kept as comments\n\n${flow.yaml}`)
     }),
   )
 
